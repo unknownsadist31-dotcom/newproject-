@@ -1,15 +1,6 @@
 import type { NextConfig } from 'next'
 import createNextIntlPlugin from 'next-intl/plugin'
-
-// Inlined from src/config.ts to avoid module resolution issues
-// (next.config.ts is compiled outside the bundler, so path aliases don't work)
-const SUBDOMAIN_ROUTES = [
-  { path: '/tcy', host: 'tcy.thorchain.org' },
-  { path: '/bond', host: 'bond.thorchain.org' },
-  { path: '/memo', host: 'memo.thorchain.org' },
-  { path: '/pool', host: 'pool.thorchain.org' },
-  { path: '/thorname', host: 'thorname.thorchain.org' }
-] as const
+import { SUBDOMAIN_ROUTES } from '@/config'
 
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts')
 const discoveryLinks = [
@@ -20,6 +11,23 @@ const discoveryLinks = [
   '</llms.txt>; rel="alternate"; type="text/markdown"',
   '</.well-known/agent-skills/index.json>; rel="describedby"; type="application/json"'
 ].join(', ')
+
+const proxyRewrites = [
+  // THORSwap API
+  { source: '/api/proxy/thorswap/:path*', destination: 'https://api.thorswap.net/:path*' },
+  // THORChain memoless
+  { source: '/api/proxy/thorchain/:path*', destination: 'https://api.thorchain.org/:path*' },
+  // Liquify THORNode
+  { source: '/api/proxy/lq-thornode/:path*', destination: 'https://gateway.liquify.com/chain/thorchain_api/:path*' },
+  // Liquify Midgard
+  { source: '/api/proxy/lq-midgard/:path*', destination: 'https://gateway.liquify.com/chain/thorchain_midgard/:path*' },
+  // Maya Midgard
+  { source: '/api/proxy/mayamidgard/:path*', destination: 'https://midgard.mayachain.info/:path*' },
+  // MayaNode
+  { source: '/api/proxy/mayanode/:path*', destination: 'https://mayanode.mayachain.info/:path*' },
+  // DexScreener
+  { source: '/api/proxy/dexscreener/:path*', destination: 'https://api.dexscreener.com/:path*' },
+]
 
 const nextConfig: NextConfig = {
   output: 'standalone',
@@ -52,7 +60,7 @@ const nextConfig: NextConfig = {
         has: [{ type: 'host', value: host }],
         destination: path
       })),
-      afterFiles: [],
+      afterFiles: proxyRewrites,
       fallback: []
     }
   }
