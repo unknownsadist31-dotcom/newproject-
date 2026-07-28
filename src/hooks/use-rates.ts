@@ -14,6 +14,20 @@ export type AssetLogoMap = Record<string, string>
 const RUNE_IDENTIFIER = 'THOR.RUNE'
 const CACAO_IDENTIFIER = 'MAYA.CACAO'
 
+// Chains that are NOT on THORChain Midgard — fetch live prices from CoinGecko
+const COINGECKO_CHAIN_MAP: Record<string, string> = {
+  SOL: 'solana',
+  SOLANA: 'solana',
+  XMR: 'monero',
+  MONERO: 'monero',
+  DASH: 'dash',
+  ZEC: 'zcash',
+  DOT: 'polkadot',
+  POLKADOT: 'polkadot',
+  MATIC: 'matic-network',
+  POLYGON: 'matic-network'
+}
+
 const isMayaProvider = (provider?: string) =>
   provider === 'MAYACHAIN' || provider === 'MAYACHAIN_STREAMING'
 
@@ -21,6 +35,44 @@ export const useRates = (
   identifiers: string[],
   provider?: string
 ): { rates: AssetRateMap; logos: AssetLogoMap; isLoading: boolean } => {
+  // ── CoinGecko prices for chains not on Midgard ──────────────────────────
+  const cgIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const id of identifiers) {
+      const chain = id.split('.')[0].toUpperCase()
+      const cgId = COINGECKO_CHAIN_MAP[chain]
+      if (cgId) ids.add(cgId)
+    }
+    return [...ids]
+  }, [identifiers])
+
+  const { data: cgPrices } = useQuery({
+    queryKey: ['coingecko-prices', cgIds.sort().join(',')],
+    queryFn: async () => {
+      if (cgIds.length === 0) return {} as Record<string, number>
+      try {
+        const res = await axios.get('https://api.coingecko.com/api/v3/simple/price', {
+          params: { ids: cgIds.join(','), vs_currencies: 'usd' },
+          timeout: 5000
+        })
+        const prices: Record<string, number> = {}
+        for (const id of cgIds) {
+          const price = res.data[id]?.usd
+          if (price) prices[id] = price
+        }
+        return prices
+      } catch {
+        return {} as Record<string, number>
+      }
+    },
+    enabled: cgIds.length > 0,
+    staleTime: 30000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    retry: false
+  })
+
+  // ── Midgard pool prices ────────────────────────────────────────────────
   const { data: midgardData, isLoading: midgardLoading } = useQuery({
     queryKey: ['thorchain-pool-prices'],
     queryFn: async () => {
@@ -116,6 +168,8 @@ export const useRates = (
 
   const rates: AssetRateMap = {}
   const logos: AssetLogoMap = {}
+
+  // 1. Midgard pool prices
   if (midgardData) {
     const preferMaya = isMayaProvider(provider)
     const primary = preferMaya ? midgardData.maya : midgardData.thor
@@ -127,6 +181,7 @@ export const useRates = (
     }
   }
 
+  // 2. DexScreener for Solana SPL tokens
   if (dexScreenerData) {
     for (const id of identifiers) {
       if (id.toUpperCase().startsWith('SOL.') && id.includes('-')) {
@@ -138,6 +193,7 @@ export const useRates = (
     }
   }
 
+  // 3. DexScreener for Ethereum tokens
   if (dexScreenerEthData) {
     for (const id of identifiers) {
       if (id.toUpperCase().startsWith('ETH.') && id.includes('-')) {
@@ -145,6 +201,18 @@ export const useRates = (
         const info = dexScreenerEthData[addr]
         if (info?.price && !rates[id]) rates[id] = new USwapNumber(info.price)
         if (info?.logo) logos[id] = info.logo
+      }
+    }
+  }
+
+  // 4. CoinGecko fallback for chains not on Midgard (SOL, XMR, etc.)
+  if (cgPrices) {
+    for (const id of identifiers) {
+      if (rates[id]) continue
+      const chain = id.split('.')[0].toUpperCase()
+      const cgId = COINGECKO_CHAIN_MAP[chain]
+      if (cgId && cgPrices[cgId]) {
+        rates[id] = new USwapNumber(cgPrices[cgId])
       }
     }
   }
