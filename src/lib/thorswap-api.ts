@@ -80,7 +80,7 @@ export interface InboundAddress {
   outbound_fee?: string
 }
 
-// ── Quote ──────────────────────────────────────────────────────────────────
+// ── Quote Params ───────────────────────────────────────────────────────────
 
 export interface GetQuoteParams {
   sellAsset: string
@@ -99,7 +99,10 @@ export interface GetQuoteParams {
   providers?: string[]
 }
 
+// ── Unit Conversion Helpers ────────────────────────────────────────────────
+
 function toBaseUnits(amount: string, decimals: number): string {
+  if (!decimals || decimals <= 0) return amount
   const [whole = '0', frac = ''] = amount.split('.')
   const padded = (frac || '').padEnd(decimals, '0').slice(0, decimals)
   const combined = whole + padded
@@ -118,6 +121,8 @@ function fromBaseUnits(amount: string, decimals: number): string {
   const result = frac.length > 0 ? `${whole}.${frac}` : whole
   return neg ? `-${result}` : result
 }
+
+// ── THORNode Response Types ────────────────────────────────────────────────
 
 interface THORNodeQuoteFees {
   asset: string
@@ -149,10 +154,16 @@ interface THORNodeQuoteResponse {
   notes: string
 }
 
-// ── CoinGecko price cache ──────────────────────────────────────────────────
+interface THORNodeErrorResponse {
+  code: number
+  message: string
+  details: unknown[]
+}
+
+// ── CoinGecko Price Cache ──────────────────────────────────────────────────
 
 const priceCache = new Map<string, { price: number; ts: number }>()
-const CACHE_TTL = 60000 // 1 minute
+const CACHE_TTL = 30000 // 30 seconds
 
 async function getCoinGeckoPrice(coingeckoId: string): Promise<number | null> {
   const cached = priceCache.get(coingeckoId)
@@ -168,92 +179,120 @@ async function getCoinGeckoPrice(coingeckoId: string): Promise<number | null> {
       priceCache.set(coingeckoId, { price, ts: Date.now() })
       return price
     }
-  } catch {
-    // fall through to DexScreener
-  }
+  } catch { /* fall through */ }
   return null
 }
 
-async function getDexScreenerPrice(tokenAddress: string, chain: string): Promise<number | null> {
-  try {
-    const res = await axios.get(`${PROXY}/dexscreener/latest/dex/tokens/${tokenAddress}`, { timeout: 5000 })
-    const pairs = res.data?.pairs
-    if (pairs && pairs.length > 0) {
-      return parseFloat(pairs[0].priceUsd) || null
+async function getCoinGeckoPrices(ids: string[]): Promise<Record<string, number>> {
+  const result: Record<string, number> = {}
+  const fresh: string[] = []
+
+  for (const id of ids) {
+    const cached = priceCache.get(id)
+    if (cached && Date.now() - cached.ts < CACHE_TTL) {
+      result[id] = cached.price
+    } else {
+      fresh.push(id)
     }
-  } catch {
-    // ignore
   }
-  return null
+
+  if (fresh.length > 0) {
+    try {
+      const res = await axios.get(`${COINGECKO_API}/simple/price`, {
+        params: { ids: fresh.join(','), vs_currencies: 'usd' },
+        timeout: 5000
+      })
+      for (const id of fresh) {
+        const price = res.data[id]?.usd
+        if (price) {
+          result[id] = price
+          priceCache.set(id, { price, ts: Date.now() })
+        }
+      }
+    } catch { /* use cached only */ }
+  }
+
+  return result
 }
 
-// ── Synthetic Quote for non-THORChain chains (Solana, Monero) ──────────────
+// ── Chain → CoinGecko ID Mapping ──────────────────────────────────────────
 
-const SYNTHETIC_CHAINS = ['SOL', 'SOLANA', 'XMR', 'MONERO']
-
-const COINGECKO_ID_MAP: Record<string, string> = {
+const CHAIN_TO_COINGECKO: Record<string, string> = {
+  BTC: 'bitcoin',
+  ETH: 'ethereum',
+  BSC: 'binancecoin',
+  BNB: 'binancecoin',
+  AVAX: 'avalanche-2',
+  BASE: 'ethereum',       // Base ETH uses ethereum price
+  GAIA: 'cosmos',
+  ATOM: 'cosmos',
+  DOGE: 'dogecoin',
+  BCH: 'bitcoin-cash',
+  LTC: 'litecoin',
+  XRP: 'ripple',
+  TRON: 'tron',
+  TRX: 'tron',
+  THOR: 'thorchain',
+  RUNE: 'thorchain',
   SOL: 'solana',
   SOLANA: 'solana',
   XMR: 'monero',
-  MONERO: 'monero'
+  MONERO: 'monero',
+  ARB: 'ethereum',        // Arbitrum ETH uses ethereum price
+  ARBITRUM: 'ethereum',
+  DASH: 'dash',
+  ZEC: 'zcash',
+  MAYA: 'maya-protocol',
+  CACAO: 'maya-protocol',
+  DOT: 'polkadot',
+  POLKADOT: 'polkadot',
+  MATIC: 'matic-network',
+  POLYGON: 'matic-network',
+  OP: 'ethereum',         // Optimism ETH
+  OPTIMISM: 'ethereum',
 }
 
-async function getSyntheticQuote(params: GetQuoteParams): Promise<ThorSwapQuoteRoute[]> {
-  const sellChain = params.sellAsset.split('.')[0].toUpperCase()
-  const buyChain = params.buyAsset.split('.')[0].toUpperCase()
+function getCgIdForAsset(identifier: string): string | null {
+  const chain = identifier.split('.')[0].toUpperCase()
+  return CHAIN_TO_COINGECKO[chain] || null
+}
 
-  const sellCgId = COINGECKO_ID_MAP[sellChain]
-  const buyCgId = COINGECKO_ID_MAP[buyChain]
+// ── Synthetic Quote (CoinGecko cross-rate) ─────────────────────────────────
 
-  const [sellPrice, buyPrice] = await Promise.all([
-    sellCgId ? getCoinGeckoPrice(sellCgId) : null,
-    buyCgId ? getCoinGeckoPrice(buyCgId) : null
-  ])
-
-  if (!sellPrice || !buyPrice) {
-    throw new Error(`Unable to fetch live price for ${!sellPrice ? params.sellAsset : params.buyAsset}. Try again shortly.`)
-  }
-
+async function buildSyntheticQuote(
+  params: GetQuoteParams,
+  sellUsdPrice: number,
+  buyUsdPrice: number
+): Promise<ThorSwapQuoteRoute[]> {
   const sellAmount = parseFloat(params.sellAmount)
-  const sellUsd = sellAmount * sellPrice
-  const rawBuy = sellUsd / buyPrice
-  const feeRate = 0.005 // 0.5% synthetic fee
+  const sellUsd = sellAmount * sellUsdPrice
+  const rawBuy = sellUsd / buyUsdPrice
+  const feeRate = 0.005
   const buyAfterFee = rawBuy * (1 - feeRate)
 
   const buyDecimals = params.buyDecimals || 8
-  const sellDecimals = params.decimals || 8
-  const buyAmountDisplay = buyAfterFee.toFixed(Math.min(buyDecimals, 8))
-  const buyAmountBase = toBaseUnits(buyAfterFee.toFixed(buyDecimals), buyDecimals)
-  const sellAmountBase = toBaseUnits(params.sellAmount, sellDecimals)
-
   const now = Math.floor(Date.now() / 1000)
-  const expiry = now + 900 // 15 minutes
 
   const route: ThorSwapQuoteRoute = {
     sellAsset: params.sellAsset,
     buyAsset: params.buyAsset,
     sellAmount: params.sellAmount,
-    buyAmount: buyAmountDisplay,
-    expectedBuyAmount: buyAmountDisplay,
+    buyAmount: buyAfterFee.toFixed(Math.min(buyDecimals, 8)),
+    expectedBuyAmount: buyAfterFee.toFixed(Math.min(buyDecimals, 8)),
     fees: [
       {
         type: 'liquidity',
         asset: params.buyAsset,
         amount: toBaseUnits((rawBuy * feeRate * 0.8).toFixed(buyDecimals), buyDecimals)
       },
-      {
-        type: 'outbound',
-        asset: params.buyAsset,
-        amount: toBaseUnits((rawBuy * feeRate * 0.2).toFixed(buyDecimals), buyDecimals)
-      },
       { type: 'inbound', asset: params.buyAsset, amount: '0' }
     ],
     providers: ['SYNTHETIC'],
     destinationAddress: params.recipientAddress || '',
-    expiration: String(expiry),
+    expiration: String(now + 900),
     estimatedTime: { total: 300 },
     meta: {
-      slippageBps: 50, // 0.5% for synthetic
+      slippageBps: 50,
       hasStreamingSwap: false
     }
   }
@@ -261,38 +300,32 @@ async function getSyntheticQuote(params: GetQuoteParams): Promise<ThorSwapQuoteR
   return [route]
 }
 
-// ── Main getQuote ──────────────────────────────────────────────────────────
+async function trySyntheticQuote(params: GetQuoteParams): Promise<ThorSwapQuoteRoute[] | null> {
+  const sellCgId = getCgIdForAsset(params.sellAsset)
+  const buyCgId = getCgIdForAsset(params.buyAsset)
 
-export const getQuote = async (params: GetQuoteParams): Promise<ThorSwapQuoteRoute[]> => {
-  const sellChain = params.sellAsset.split('.')[0].toUpperCase()
-  const buyChain = params.buyAsset.split('.')[0].toUpperCase()
+  const ids = [...new Set([sellCgId, buyCgId].filter(Boolean) as string[])]
+  if (ids.length < 2) return null
 
-  // Route Solana/Monero through synthetic quote provider
-  if (
-    SYNTHETIC_CHAINS.includes(sellChain) ||
-    SYNTHETIC_CHAINS.includes(buyChain)
-  ) {
-    return getSyntheticQuote(params)
-  }
+  const prices = await getCoinGeckoPrices(ids)
+  const sellPrice = sellCgId ? prices[sellCgId] : undefined
+  const buyPrice = buyCgId ? prices[buyCgId] : undefined
 
-  const sellDecimals = params.decimals ?? 8
-  const amount = toBaseUnits(params.sellAmount, sellDecimals)
+  if (!sellPrice || !buyPrice) return null
+  return buildSyntheticQuote(params, sellPrice, buyPrice)
+}
 
-  const queryParams: Record<string, string> = {
-    from_asset: params.sellAsset,
-    to_asset: params.buyAsset,
-    amount
-  }
+// ── THORNode Quote → Route Mapping ─────────────────────────────────────────
 
-  if (params.streamingInterval) queryParams.streaming_interval = String(params.streamingInterval)
-  if (params.streamingQuantity) queryParams.streaming_quantity = String(params.streamingQuantity)
-  if (params.affiliateBps) queryParams.affiliate_bps = String(params.affiliateBps)
-  if (params.affiliateAddress) queryParams.affiliate_address = params.affiliateAddress
-
-  const res = await thornode.get<THORNodeQuoteResponse>('/thorchain/quote/swap', { params: queryParams })
-  const data = res.data
-
-  const buyDecimals = params.buyDecimals || 8
+function thornodeResponseToRoute(
+  params: GetQuoteParams,
+  data: THORNodeQuoteResponse
+): ThorSwapQuoteRoute {
+  // THORChain uses 8 decimals for native/gas assets internally,
+  // regardless of what the tokenlist says. Only contract tokens
+  // (identifiers containing a dash) use their native decimals.
+  const isNativeAsset = !params.buyAsset.includes('-')
+  const buyDecimals = isNativeAsset ? 8 : (params.buyDecimals || 8)
   const buyAmountDisplay = fromBaseUnits(data.expected_amount_out, buyDecimals)
 
   const feeAsset = data.fees.asset || params.buyAsset
@@ -301,7 +334,6 @@ export const getQuote = async (params: GetQuoteParams): Promise<ThorSwapQuoteRou
   if (data.fees.liquidity && data.fees.liquidity !== '0') {
     fees.push({ type: 'liquidity', asset: feeAsset, amount: data.fees.liquidity })
   }
-
   if (data.fees.outbound && data.fees.outbound !== '0') {
     fees.push({ type: 'outbound', asset: feeAsset, amount: data.fees.outbound })
   }
@@ -316,7 +348,7 @@ export const getQuote = async (params: GetQuoteParams): Promise<ThorSwapQuoteRou
 
   fees.push({ type: 'inbound', asset: feeAsset, amount: '0' })
 
-  const route: ThorSwapQuoteRoute = {
+  return {
     sellAsset: params.sellAsset,
     buyAsset: params.buyAsset,
     sellAmount: params.sellAmount,
@@ -333,8 +365,56 @@ export const getQuote = async (params: GetQuoteParams): Promise<ThorSwapQuoteRou
       hasStreamingSwap: (data.streaming_swap_blocks || 0) > 0
     }
   }
+}
 
-  return [route]
+// ── Main getQuote (THORNode first, synthetic fallback) ─────────────────────
+
+async function tryTHORNodeQuote(params: GetQuoteParams): Promise<ThorSwapQuoteRoute[] | null> {
+  const sellDecimals = params.decimals ?? 8
+  const amount = toBaseUnits(params.sellAmount, sellDecimals)
+
+  const queryParams: Record<string, string> = {
+    from_asset: params.sellAsset,
+    to_asset: params.buyAsset,
+    amount,
+  }
+
+  if (params.streamingInterval) queryParams.streaming_interval = String(params.streamingInterval)
+  if (params.streamingQuantity) queryParams.streaming_quantity = String(params.streamingQuantity)
+  if (params.affiliateBps) queryParams.affiliate_bps = String(params.affiliateBps)
+  if (params.affiliateAddress) queryParams.affiliate_address = params.affiliateAddress
+
+  try {
+    const res = await thornode.get<THORNodeQuoteResponse>('/thorchain/quote/swap', {
+      params: queryParams,
+      validateStatus: (s) => s === 200
+    })
+    return [thornodeResponseToRoute(params, res.data)]
+  } catch (err: unknown) {
+    // THORNode failed — log and fall back to synthetic
+    if (axios.isAxiosError(err) && err.response?.data) {
+      const body = err.response.data as THORNodeErrorResponse
+      if (body?.message) {
+        console.warn(`THORNode quote failed (${params.sellAsset} → ${params.buyAsset}): ${body.message}`)
+      }
+    }
+    return null
+  }
+}
+
+export const getQuote = async (params: GetQuoteParams): Promise<ThorSwapQuoteRoute[]> => {
+  // Try THORNode first
+  const thornodeResult = await tryTHORNodeQuote(params)
+  if (thornodeResult) return thornodeResult
+
+  // Fall back to synthetic
+  const syntheticResult = await trySyntheticQuote(params)
+  if (syntheticResult) return syntheticResult
+
+  throw new Error(
+    `No quote available for ${params.sellAsset} → ${params.buyAsset}. ` +
+    `THORChain does not support this pair and no price data is available for synthetic routing.`
+  )
 }
 
 // ── Token List ─────────────────────────────────────────────────────────────
