@@ -80,11 +80,12 @@ export const SwapButton = ({ instantSwapSupported, instantSwapAvailable }: SwapB
     }
 
     if (!selectedAccount) {
-      const isSynthetic = quote?.providers[0] === 'SYNTHETIC'
-      if (instantSwapSupported || isSynthetic) {
+      // SOL/XMR deposit quotes + normal Instant Swap: recipient → confirm → send+QR
+      const isDepositQuote = !!quote?.meta?.isDepositQuote || quote?.providers[0] === 'SYNTHETIC'
+      if (instantSwapSupported || isDepositQuote) {
         const label = isLimitSwap ? t('button.enterLimitOrder') : t('button.swap')
-        if (isSynthetic) {
-          return { text: label, spinner: false, accent: true, onClick: () => onSwap() }
+        if (isDepositQuote) {
+          return { text: label, spinner: false, accent: true, onClick: () => onInstantSwap() }
         }
         if (!instantSwapAvailable) {
           return { text: label, spinner: false, accent: false }
