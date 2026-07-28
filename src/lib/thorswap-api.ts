@@ -439,12 +439,17 @@ export const getQuote = async (params: GetQuoteParams): Promise<ThorSwapQuoteRou
   const thornodeResult = await tryTHORNodeQuote(params)
   if (thornodeResult) return thornodeResult
 
-  const syntheticResult = await trySyntheticQuote(params)
-  if (syntheticResult) return syntheticResult
+  // Only use synthetic fallback for Solana and Monero chains
+  const sellChain = params.sellAsset.split('.')[0]
+  const buyChain = params.buyAsset.split('.')[0]
+  if (sellChain === 'SOL' || sellChain === 'XMR' || buyChain === 'SOL' || buyChain === 'XMR') {
+    const syntheticResult = await trySyntheticQuote(params)
+    if (syntheticResult) return syntheticResult
+  }
 
   throw new Error(
     `No quote available for ${params.sellAsset} → ${params.buyAsset}. ` +
-    `THORChain does not support this pair and no price data is available for synthetic routing.`
+    `THORChain does not support this pair and price data is unavailable.`
   )
 }
 
