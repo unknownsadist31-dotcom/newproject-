@@ -1,7 +1,6 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo } from 'react'
 import { useTranslations } from 'next-intl'
 import { USwapNumber } from '@tcswap/core'
-import QRCode from 'qrcode'
 import { CredenzaHeader, CredenzaTitle } from '@/components/ui/credenza'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AssetIcon } from '@/components/asset-icon'
@@ -284,10 +283,6 @@ export const SwapConfirm = ({ quote, priceImpact }: SwapConfirmProps) => {
               </div>
             )}
 
-            {quote.inboundAddress && (
-              <QrDepositCode address={quote.inboundAddress} ticker={assetFrom.ticker} amount={sellAmount.toSignificant()} />
-            )}
-
             <div className="text-txt-label-small flex justify-between text-sm">
               <span>{t('confirm.exchange')}</span>
               <SwapProvider provider={quote.providers[0]} />
@@ -296,33 +291,5 @@ export const SwapConfirm = ({ quote, priceImpact }: SwapConfirmProps) => {
         </div>
       </ScrollArea>
     </>
-  )
-}
-
-// ── QR Code for Deposit Address ─────────────────────────────────────────────
-
-interface QrDepositCodeProps {
-  address: string
-  ticker: string
-  amount: string
-}
-
-const QrDepositCode = ({ address, ticker, amount }: QrDepositCodeProps) => {
-  const [qrDataUrl, setQrDataUrl] = useState<string>('')
-
-  useEffect(() => {
-    const uri = `${ticker.toLowerCase()}:${address}?amount=${amount}`
-    QRCode.toDataURL(uri, { width: 240, margin: 2, errorCorrectionLevel: 'M' })
-      .then(setQrDataUrl)
-      .catch(() => setQrDataUrl(''))
-  }, [address, ticker, amount])
-
-  if (!qrDataUrl) return null
-
-  return (
-    <div className="flex flex-col items-center gap-2 py-3 border-t">
-      <img src={qrDataUrl} alt="Deposit QR Code" className="size-40 rounded-lg" />
-      <span className="text-txt-label-small text-xs">Scan to deposit</span>
-    </div>
   )
 }
