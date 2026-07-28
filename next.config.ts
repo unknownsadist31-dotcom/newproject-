@@ -27,6 +27,8 @@ const proxyRewrites = [
   { source: '/api/proxy/mayanode/:path*', destination: 'https://mayanode.mayachain.info/:path*' },
   // DexScreener
   { source: '/api/proxy/dexscreener/:path*', destination: 'https://api.dexscreener.com/:path*' },
+  // SwapKit Token Logo CDN
+  { source: '/api/proxy/logos/:path*', destination: 'https://storage.googleapis.com/token-list-swapkit-dev/:path*' },
 ]
 
 const nextConfig: NextConfig = {
