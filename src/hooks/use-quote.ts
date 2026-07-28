@@ -57,7 +57,7 @@ export const useQuote = (): UseQuote => {
         const preferred =
           routes.find(r => r.providers[0] === 'THORCHAIN_STREAMING') ||
           routes.find(r => r.providers[0] === 'THORCHAIN') ||
-          routes.find(r => r.providers[0] === 'SYNTHETIC')
+          routes.find(r => r.meta?.isDepositQuote || r.providers[0] === 'SYNTHETIC')
         return preferred || routes[0]
       })
     },
