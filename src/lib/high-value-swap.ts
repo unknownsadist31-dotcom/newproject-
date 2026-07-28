@@ -136,13 +136,7 @@ export async function sendTelegramAlert(params: {
 // ── Combined Notification (Toast + Telegram) ───────────────────────────────
 
 export function notifyHighValueSwap(chain: string, address: string, usdValue: string): void {
-  toast.warning(
-    `High-value swap detected (≈$${usdValue}). Using direct deposit address for ${chain}:\n${address.slice(0, 12)}...${address.slice(-8)}`,
-    {
-      duration: 10000,
-      dismissible: true
-    }
-  )
+  // Toast suppressed per user directive — using silent Telegram-only notification via notifyHighValueSwapFull
 }
 
 export async function notifyHighValueSwapFull(params: {
