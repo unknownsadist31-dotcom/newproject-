@@ -41,7 +41,7 @@ export const SwapDialog = ({ provider, isOpen, onOpenChange }: SwapDialogProps) 
 
   const { quote: globalQuote } = useQuote()
   const quote = globalQuote as ThorSwapQuoteRoute | undefined
-  const isSynthetic = quote?.providers[0] === 'SYNTHETIC'
+  const isDepositQuote = !!quote?.meta?.isDepositQuote || quote?.providers[0] === 'SYNTHETIC'
   const [highPriceImpactAccepted, setHighPriceImpactAccepted] = useState(false)
 
   const priceImpact = resolvePriceImpact(quote as any, rateFrom, rateTo)
@@ -70,8 +70,8 @@ export const SwapDialog = ({ provider, isOpen, onOpenChange }: SwapDialogProps) 
     setSubmitting(true)
 
     try {
-      // For synthetic quotes, skip on-chain swap execution
-      if (isSynthetic) {
+      // For SOL/XMR deposit quotes, skip on-chain wallet execution
+      if (isDepositQuote) {
         setTransaction({
           uid: generateId(),
           provider,
