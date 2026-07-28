@@ -54,16 +54,18 @@ export const useQuote = (): UseQuote => {
       }).then(routes => {
         if (!routes || routes.length === 0) return undefined
 
-        const thorchainRoute =
+        const preferred =
           routes.find(r => r.providers[0] === 'THORCHAIN_STREAMING') ||
           routes.find(r => r.providers[0] === 'THORCHAIN') ||
           routes.find(r => r.providers[0] === 'SYNTHETIC')
-        return thorchainRoute || routes[0]
+        return preferred || routes[0]
       })
     },
     enabled: !!(!valueFrom.eqValue(0) && assetFrom?.identifier && assetTo?.identifier),
-    retry: false,
-    refetchOnMount: false
+    retry: 1,
+    retryDelay: 2000,
+    refetchOnMount: false,
+    staleTime: 15000
   })
 
   let newError = error as Error | null
