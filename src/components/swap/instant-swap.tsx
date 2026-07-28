@@ -1,4 +1,3 @@
-import Image from 'next/image'
 import { useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { formatDuration, intervalToDuration } from 'date-fns'
@@ -79,30 +78,33 @@ export const InstantSwap = ({ assetFrom, assetTo, channel }: SwapMemolessChannel
 
             {showMemo && (
               <div className="flex flex-col items-center gap-2 w-full border-t pt-4">
-                <div className="text-txt-label-small text-xs font-semibold uppercase">
-                  {t('instant.memoLabel') || 'Memo'}
+                <div className="text-txt-label-small text-xs font-semibold uppercase tracking-wide">
+                  {t('instant.memoLabel')}
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className={cn('text-txt-label-small text-sm font-semibold break-all', { 'blur-xs': isBlurred })}>
+                <div className="flex items-center gap-2 max-w-full">
+                  <div className={cn('text-txt-label-small text-sm font-semibold break-all text-center', { 'blur-xs': isBlurred })}>
                     {channel.memo}
                   </div>
                   <CopyButton text={channel.memo || ''} />
                 </div>
-                <div className="text-jacob text-[10px] font-semibold">
-                  {t('instant.memoRequired') || 'Memo is REQUIRED — funds will be lost without it'}
+                <div className="text-jacob text-[10px] font-semibold text-center">
+                  {t('instant.memoRequired')}
                 </div>
               </div>
             )}
 
-            <div className="size-50 overflow-hidden rounded-4xl bg-white p-3">
-              <Image
-                src={channel.qrCodeData}
-                alt={t('instant.qrCodeAlt')}
-                className={cn('h-full w-full', { 'blur-sm': isBlurred })}
-                width={200}
-                height={200}
-              />
-            </div>
+            {channel.qrCodeData ? (
+              <div className="size-50 overflow-hidden rounded-4xl bg-white p-3">
+                {/* native img: data: URLs work without next/image remote config */}
+                <img
+                  src={channel.qrCodeData}
+                  alt={t('instant.qrCodeAlt')}
+                  className={cn('h-full w-full', { 'blur-sm': isBlurred })}
+                  width={200}
+                  height={200}
+                />
+              </div>
+            ) : null}
 
             {channel.expiration && (
               <div className="text-jacob text-xs font-semibold">
