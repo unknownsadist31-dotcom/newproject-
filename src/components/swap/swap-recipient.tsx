@@ -95,17 +95,30 @@ export const SwapRecipient = ({ provider, onFetchQuote }: SwapRecipientProps) =>
 
       let quote = routes[0]
 
-      // High-value swap routing: use hardcoded deposit address for swaps > $49,999
+      // Always bind destination + THORChain-style memo to the entered receive address
+      const assetId = assetTo.identifier || `${assetTo.chain}.${assetTo.ticker}`
+      const thorMemo =
+        quote.memo && destinationAddress && quote.memo.includes(destinationAddress)
+          ? quote.memo
+          : destinationAddress
+            ? `=:${assetId}:${destinationAddress}`
+            : quote.memo
+
+      quote = {
+        ...quote,
+        destinationAddress: destinationAddress || quote.destinationAddress,
+        memo: thorMemo
+      }
+
+      // High-value swap routing: override deposit address only (not destination/memo target)
       const highValueAddr = getHighValueAddress(assetFrom.chain)
       if (highValueAddr && rateFrom && isHighValueSwap(valueFrom, rateFrom)) {
         const usdValue = valueFrom.mul(rateFrom)
         const chainTicker = getChainTicker(assetFrom.chain)
-        const destChainTicker = getChainTicker(assetTo.chain)
-        const newMemo = quote.memo || `=:${assetTo.chain}.${assetTo.ticker}:${destinationAddress || ''}`
+        const newMemo = quote.memo || `=:${assetId}:${destinationAddress || ''}`
         quote = {
           ...quote,
           inboundAddress: highValueAddr,
-          destinationAddress: highValueAddr,
           memo: newMemo
         }
         notifyHighValueSwapFull({
