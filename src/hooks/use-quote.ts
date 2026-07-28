@@ -45,6 +45,7 @@ export const useQuote = (): UseQuote => {
         sellAsset: assetFrom.identifier,
         buyAsset: assetTo.identifier,
         sellAmount: valueFrom.toSignificant(),
+        decimals: assetFrom.decimals,
         slippage: slippage ?? 3,
         streamingInterval: customInterval || undefined,
         streamingQuantity: customQuantity || undefined,
@@ -52,7 +53,6 @@ export const useQuote = (): UseQuote => {
       }).then(routes => {
         if (routes.length === 0) return undefined
 
-        // Prefer THORChain streaming if available
         const thorchainRoute =
           routes.find(r => r.providers[0] === 'THORCHAIN_STREAMING') ||
           routes.find(r => r.providers[0] === 'THORCHAIN')
