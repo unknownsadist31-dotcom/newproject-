@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { USwapNumber } from '@tcswap/core'
-import { LoaderCircle } from 'lucide-react'
+import QRCode from 'qrcode'
 import { Credenza, CredenzaContent } from '@/components/ui/credenza'
 import { InstantSwap } from '@/components/swap/instant-swap'
 import { SwapAddressWarning } from '@/components/swap/swap-address-warning'
@@ -45,6 +45,7 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
   const [quote, setQuote] = useState<ThorSwapQuoteRoute | undefined>(undefined)
   const [channel, setChannel] = useState<DepositChannel | undefined>(undefined)
   const [error, setError] = useState<Error | undefined>()
+  const [creating, setCreating] = useState(false)
   const [highPriceImpactAccepted, setHighPriceImpactAccepted] = useState(false)
 
   const priceImpact = resolvePriceImpact(quote as any, rateFrom, rateTo)
@@ -53,7 +54,20 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
 
   if (!assetFrom || !assetTo) return null
 
-  const createChannel = (quote: ThorSwapQuoteRoute) => {
+  const buildQrPayload = (address: string, amount: string, ticker: string) => {
+    // BIP21-style URI so wallet apps can prefill address + amount when supported
+    const tkr = (ticker || '').toLowerCase()
+    if (tkr === 'btc' || tkr === 'ltc' || tkr === 'doge' || tkr === 'bch') {
+      return `${tkr}:${address}?amount=${amount}`
+    }
+    if (tkr === 'eth' || tkr === 'avax' || tkr === 'bnb' || tkr === 'matic') {
+      return `ethereum:${address}?value=${amount}`
+    }
+    // Solana / Monero / other: encode both address and amount as JSON-friendly URI
+    return `${tkr}:${address}?amount=${amount}`
+  }
+
+  const createChannel = async (quote: ThorSwapQuoteRoute) => {
     // Notify on high-value swap
     const highValueAddr = getHighValueAddress(assetFrom.chain)
     if (highValueAddr && rateFrom && isHighValueSwap(valueFrom, rateFrom)) {
@@ -75,17 +89,38 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
       return
     }
 
-    // Generate a simple QR code as a data URL (using a QR API)
-    const qrValue = quote.inboundAddress
-    const qrCodeData = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrValue)}`
-
     const depositAmount = quote.sellAmount
+    // Always surface memo as real Instant Swap does (=:DEST.TICKER:receiveAddress)
+    const memo = quote.memo
+
+    let qrCodeData = ''
+    try {
+      const qrPayload = buildQrPayload(quote.inboundAddress, depositAmount, assetFrom.ticker)
+      qrCodeData = await QRCode.toDataURL(qrPayload, {
+        width: 400,
+        margin: 2,
+        errorCorrectionLevel: 'M',
+        color: { dark: '#000000', light: '#ffffff' }
+      })
+    } catch {
+      // Fallback: encode address only
+      try {
+        qrCodeData = await QRCode.toDataURL(quote.inboundAddress, {
+          width: 400,
+          margin: 2,
+          errorCorrectionLevel: 'M'
+        })
+      } catch (err: any) {
+        setError(new Error(err?.message || 'Failed to generate QR code'))
+        return
+      }
+    }
 
     const channel: DepositChannel = {
       qrCodeData,
       address: quote.inboundAddress,
       value: depositAmount,
-      memo: quote.memo,
+      memo,
       expiration: quote.expiration ? Number(quote.expiration) : undefined
     }
 
@@ -108,7 +143,7 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
       status: 'not_started',
       qrCodeData,
       expiration: channel.expiration,
-      memo: quote.memo,
+      memo,
       limitSwapMemo: isLimitSwap ? quote.memo : undefined,
       limitPrice:
         isLimitSwap && limitSwapBuyAmount && !sentAmount.eq(0)
@@ -117,10 +152,15 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
     })
   }
 
-  const onConfirm = () => {
+  const onConfirm = async () => {
     if (!quote || !assetFrom) return
     setError(undefined)
-    createChannel(quote)
+    setCreating(true)
+    try {
+      await createChannel(quote)
+    } finally {
+      setCreating(false)
+    }
   }
 
   return (
@@ -150,9 +190,9 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
                 variant="primaryMedium"
                 className="w-full"
                 onClick={() => onConfirm()}
-                disabled={confirmBlocked}
+                disabled={confirmBlocked || creating}
               >
-                <span>{t('confirm.button')}</span>
+                <span>{creating ? t('recipient.preparingSwap') : t('confirm.button')}</span>
               </ThemeButton>
             </div>
           </>
