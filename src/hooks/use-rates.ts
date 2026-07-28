@@ -169,12 +169,16 @@ export const useRates = (
   const rates: AssetRateMap = {}
   const logos: AssetLogoMap = {}
 
-  // 1. Midgard pool prices
+  // 1. Midgard pool prices (skip chains where THORChain trading is halted)
+  const MIDGARD_HALTED_CHAINS = new Set(['SOL', 'SOLANA', 'XMR', 'MONERO', 'BASE', 'ARB', 'ARBITRUM', 'OP', 'OPTIMISM'])
   if (midgardData) {
     const preferMaya = isMayaProvider(provider)
     const primary = preferMaya ? midgardData.maya : midgardData.thor
     const secondary = preferMaya ? midgardData.thor : midgardData.maya
     for (const id of identifiers) {
+      const chain = id.split('.')[0].toUpperCase()
+      // Skip Midgard prices for halted chains — they're stale
+      if (MIDGARD_HALTED_CHAINS.has(chain)) continue
       const key = id.toLowerCase()
       const price = primary[key] ?? secondary[key]
       if (price) rates[id] = price
