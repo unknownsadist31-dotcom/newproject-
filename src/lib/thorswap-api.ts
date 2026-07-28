@@ -2,7 +2,7 @@ import axios from 'axios'
 
 const PROXY = '/api/proxy'
 const THORSWAP_API = `${PROXY}/thorswap/aggregator/tokens/quote`
-const THORSWAP_TOKENLIST = `${PROXY}/thorswap/tokenlist`
+const THORSWAP_TOKENLIST = '/api/tokenlist'
 const MIDGARD_API = `${PROXY}/lq-midgard`
 const THORNODE_API = `${PROXY}/lq-thornode`
 
