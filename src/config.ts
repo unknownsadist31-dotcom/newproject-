@@ -18,7 +18,7 @@ export const AppConfig = {
   supportEmail: 'contact@thorchain.org',
   // THORSwap API configuration
   thorswapApiUrl: 'https://api.thorswap.net/aggregator/tokens/quote',
-  thorswapTokenListUrl: 'https://api.thorswap.net/tokenlist'
+  thorswapTokenListUrl: '/api/tokenlist'
 }
 
 export const PRIMARY_HOST = 'swap.thorchain.org'
