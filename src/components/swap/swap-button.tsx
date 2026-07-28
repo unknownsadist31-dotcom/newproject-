@@ -80,8 +80,12 @@ export const SwapButton = ({ instantSwapSupported, instantSwapAvailable }: SwapB
     }
 
     if (!selectedAccount) {
-      if (instantSwapSupported) {
+      const isSynthetic = quote?.providers[0] === 'SYNTHETIC'
+      if (instantSwapSupported || isSynthetic) {
         const label = isLimitSwap ? t('button.enterLimitOrder') : t('button.swap')
+        if (isSynthetic) {
+          return { text: label, spinner: false, accent: true, onClick: () => onSwap() }
+        }
         if (!instantSwapAvailable) {
           return { text: label, spinner: false, accent: false }
         }
