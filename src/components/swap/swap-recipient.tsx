@@ -79,6 +79,8 @@ export const SwapRecipient = ({ provider, onFetchQuote }: SwapRecipientProps) =>
         sellAsset: assetFrom.identifier,
         buyAsset: assetTo.identifier,
         sellAmount: valueFrom.toSignificant(),
+        decimals: assetFrom.decimals ?? 8,
+        buyDecimals: assetTo.decimals ?? 8,
         senderAddress: selectedAccount?.address,
         recipientAddress: destinationAddress || undefined,
         slippage: isLimitSwap ? 0 : (slippage ?? 3),
