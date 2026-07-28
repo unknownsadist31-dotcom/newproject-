@@ -118,7 +118,10 @@
       "sendTitle": "Send {asset}",
       "sendDescription": "Send exactly <b>{amount} {ticker}</b> to the address below from a self custody wallet.",
       "qrCodeAlt": "QR Code",
-      "expiresIn": "Expires in"
+      "expiresIn": "Expires in",
+      "depositAddress": "Address",
+      "memoLabel": "Memo",
+      "memoRequired": "Memo is REQUIRED — funds will be lost without it"
     },
     "error": {
       "memoMissing": "Memo is missing",
