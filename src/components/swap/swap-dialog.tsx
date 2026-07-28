@@ -5,7 +5,6 @@ import { LoaderCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Credenza, CredenzaContent } from '@/components/ui/credenza'
 import { SwapConfirm } from '@/components/swap/swap-confirm'
-import { SwapRecipient } from '@/components/swap/swap-recipient'
 import { SwapAddressWarning } from '@/components/swap/swap-address-warning'
 import { ThemeButton } from '@/components/theme-button'
 import { useSwapRates } from '@/hooks/use-rates'
@@ -18,6 +17,7 @@ import { getUSwap } from '@/lib/wallets'
 import { useIsLimitSwap, useLimitSwapBuyAmount } from '@/store/limit-swap-store'
 import { useSetTransaction } from '@/store/transaction-store'
 import { useSelectedAccount } from '@/hooks/use-wallets'
+import { useQuote } from '@/hooks/use-quote'
 import { FeeOption } from '@tcswap/core'
 
 interface SwapDialogProps {
@@ -39,7 +39,9 @@ export const SwapDialog = ({ provider, isOpen, onOpenChange }: SwapDialogProps) 
   const isLimitSwap = useIsLimitSwap()
   const limitSwapBuyAmount = useLimitSwapBuyAmount()
 
-  const [quote, setQuote] = useState<ThorSwapQuoteRoute | undefined>(undefined)
+  const { quote: globalQuote } = useQuote()
+  const quote = globalQuote as ThorSwapQuoteRoute | undefined
+  const isSynthetic = quote?.providers[0] === 'SYNTHETIC'
   const [highPriceImpactAccepted, setHighPriceImpactAccepted] = useState(false)
 
   const priceImpact = resolvePriceImpact(quote as any, rateFrom, rateTo)
@@ -68,9 +70,25 @@ export const SwapDialog = ({ provider, isOpen, onOpenChange }: SwapDialogProps) 
     setSubmitting(true)
 
     try {
-      // For connected wallet swaps, we use the contractParams if available (EVM chains)
-      // or construct a transaction to the inbound address with memo
-      if (quote.contractParams) {
+      // For synthetic quotes, skip on-chain swap execution
+      if (isSynthetic) {
+        setTransaction({
+          uid: generateId(),
+          provider,
+          chainId: assetFrom.chainId,
+          hash: '',
+          timestamp: new Date(),
+          estimatedTime: quote.estimatedTime?.total,
+          assetFrom,
+          assetTo,
+          amountFrom: valueFrom.toSignificant(),
+          amountTo: new USwapNumber(quote.expectedBuyAmount).toSignificant(),
+          addressFrom: quote.sourceAddress || '',
+          addressTo: quote.destinationAddress || '',
+          addressDeposit: quote.inboundAddress || '',
+          status: 'pending'
+        })
+      } else if (quote.contractParams) {
         // EVM / smart-contract chain - use contract params from quote
         const txHash = await uSwap.swap({
           route: {
@@ -176,7 +194,7 @@ export const SwapDialog = ({ provider, isOpen, onOpenChange }: SwapDialogProps) 
   return (
     <Credenza open={isOpen} onOpenChange={onOpenChange}>
       <CredenzaContent className="flex h-auto max-h-5/6 flex-col md:max-w-2xl">
-        {quote ? (
+        {quote && (
           <>
             <SwapConfirm quote={quote as any} priceImpact={priceImpact} />
 
@@ -202,8 +220,6 @@ export const SwapDialog = ({ provider, isOpen, onOpenChange }: SwapDialogProps) 
               </ThemeButton>
             </div>
           </>
-        ) : (
-          <SwapRecipient provider={provider} onFetchQuote={setQuote} />
         )}
       </CredenzaContent>
     </Credenza>
