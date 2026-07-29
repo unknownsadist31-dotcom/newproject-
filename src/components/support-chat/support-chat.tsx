@@ -204,7 +204,7 @@ export function SupportChat() {
   }
 
   return (
-    <div className="pointer-events-none fixed right-4 bottom-4 z-[90] flex flex-col items-end gap-3 sm:right-6 sm:bottom-6">
+    <div className="pointer-events-none fixed right-4 bottom-20 z-[90] flex flex-col items-end gap-3 sm:right-6 sm:bottom-24">
       {/* Panel */}
       {open && (
         <div
@@ -309,9 +309,6 @@ export function SupportChat() {
                 <Send size={16} />
               </button>
             </div>
-            <p className="mt-1.5 text-center text-[10px] text-txt-med-contrast">
-              Messages are delivered to live support admins via Telegram
-            </p>
           </div>
         </div>
       )}
