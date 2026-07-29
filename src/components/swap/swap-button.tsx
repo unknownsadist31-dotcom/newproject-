@@ -73,10 +73,25 @@ export const SwapButton = ({ instantSwapSupported, instantSwapAvailable }: SwapB
 
     if (isQuoting || isSimulating) return { text: t('button.quoting'), spinner: true, accent: false }
 
-    if (!quote) return { text: t('button.noValidQuotes'), spinner: false, accent: false }
-
     if (isLimitSwap && limitSwapBuyAmount === '0') {
       return { text: t('button.enterLimitPrice'), spinner: false, accent: false }
+    }
+
+    // No route from main THORSwap/THORNode: match THORSwap and prompt Connect on the buy chain
+    // so destination accounts can be linked for Instant / external flows.
+    if (!quote) {
+      return {
+        text: t('button.connectWallet', { chain: chainLabel(assetTo.chain) }),
+        spinner: false,
+        accent: false,
+        onClick: () => {
+          if (externalWalletMode) {
+            toast.warning(tWallet('externalWalletAssetUnsupported'))
+            setExternalWalletMode(false)
+          }
+          openDialog(ConnectWallet, { chain: assetTo.chain })
+        }
+      }
     }
 
     if (!selectedAccount) {
