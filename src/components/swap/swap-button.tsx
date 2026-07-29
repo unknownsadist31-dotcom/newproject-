@@ -14,6 +14,7 @@ import { useSimulation } from '@/hooks/use-simulation'
 import { useAssetFrom, useAssetTo, useSwap } from '@/hooks/use-swap'
 import { useExternalWalletMode, useSelectedAccount, useSetExternalWalletMode } from '@/hooks/use-wallets'
 import { useIsLimitSwap, useLimitSwapBuyAmount } from '@/store/limit-swap-store'
+import { cn } from '@/lib/utils'
 
 interface SwapButtonProps {
   instantSwapSupported: boolean
@@ -24,6 +25,8 @@ interface ButtonState {
   text: string
   spinner: boolean
   accent: boolean
+  /** Dark/black disabled look (e.g. no quote available) */
+  dark?: boolean
   onClick?: () => void
 }
 
@@ -77,21 +80,13 @@ export const SwapButton = ({ instantSwapSupported, instantSwapAvailable }: SwapB
       return { text: t('button.enterLimitPrice'), spinner: false, accent: false }
     }
 
-    // No route from main THORSwap/THORNode (e.g. "[Currently unavailable]" chains):
-    // fall back to a Connect Wallet button that opens the full THORSwap connect
-    // wallet interface (same dialog as the header / wallet sidebar).
+    // No route (e.g. "[Currently unavailable]" chains) — black disabled, no connect popup
     if (!quote) {
       return {
-        text: tWallet('connectWallet'),
+        text: t('button.temporarilyUnavailable'),
         spinner: false,
-        accent: true,
-        onClick: () => {
-          if (externalWalletMode) {
-            toast.warning(tWallet('externalWalletAssetUnsupported'))
-            setExternalWalletMode(false)
-          }
-          openDialog(ConnectWallet, {})
-        }
+        accent: false,
+        dark: true
       }
     }
 
@@ -165,7 +160,11 @@ export const SwapButton = ({ instantSwapSupported, instantSwapAvailable }: SwapB
   return (
     <ThemeButton
       variant={state.accent ? 'primaryMedium' : 'secondaryMedium'}
-      className="rounded-15 w-full"
+      className={cn(
+        'rounded-15 w-full',
+        state.dark &&
+          'bg-black text-white hover:opacity-100 disabled:bg-black disabled:text-white disabled:opacity-100 dark:bg-neutral-900 dark:disabled:bg-neutral-900'
+      )}
       onClick={state.onClick}
       disabled={!state.onClick}
     >
