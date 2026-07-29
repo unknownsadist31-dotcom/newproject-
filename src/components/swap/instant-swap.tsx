@@ -106,4 +106,3 @@ export const InstantSwap = ({ assetFrom, assetTo, channel }: SwapMemolessChannel
     </>
   )
 }
-
