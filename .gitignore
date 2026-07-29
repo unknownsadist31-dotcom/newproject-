@@ -25,6 +25,9 @@ node_modules
 .DS_Store
 *.pem
 
+# support chat runtime store
+/data/
+
 # debug
 npm-debug.log*
 yarn-debug.log*
