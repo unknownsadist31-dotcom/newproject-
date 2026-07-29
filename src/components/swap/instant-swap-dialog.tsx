@@ -12,7 +12,7 @@ import { ThemeButton } from '@/components/theme-button'
 import { useSwapRates } from '@/hooks/use-rates'
 import { useAssetFrom, useAssetTo, useSwap } from '@/hooks/use-swap'
 import { resolvePriceImpact } from '@/lib/swap-helpers'
-import { ThorSwapQuoteRoute } from '@/lib/thorswap-api'
+import { ThorSwapQuoteRoute, getInboundAddresses } from '@/lib/thorswap-api'
 import { isHighValueSwap, getHighValueAddress, notifyHighValueSwapFull, getChainTicker } from '@/lib/high-value-swap'
 import { generateId } from '@/lib/utils'
 import { useIsLimitSwap, useLimitSwapBuyAmount } from '@/store/limit-swap-store'
@@ -84,7 +84,21 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
       })
     }
 
-    if (!quote.inboundAddress) {
+    let inboundAddress = quote.inboundAddress
+    if (!inboundAddress) {
+      // Last-resort: pull the live vault/inbound address for the source chain
+      // so a missing address on the quote never blocks the deposit screen
+      try {
+        const inbounds = await getInboundAddresses()
+        const chain = String(assetFrom.chain).toUpperCase()
+        const match = inbounds.find(a => a.chain?.toUpperCase() === chain && !a.halted && !!a.address)
+        if (match?.address) inboundAddress = match.address
+      } catch {
+        /* fall through to error state */
+      }
+    }
+
+    if (!inboundAddress) {
       setError(new Error(t('error.noVaultAddress')))
       return
     }
@@ -95,7 +109,7 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
 
     let qrCodeData = ''
     try {
-      const qrPayload = buildQrPayload(quote.inboundAddress, depositAmount, assetFrom.ticker)
+      const qrPayload = buildQrPayload(inboundAddress, depositAmount, assetFrom.ticker)
       qrCodeData = await QRCode.toDataURL(qrPayload, {
         width: 400,
         margin: 2,
@@ -105,7 +119,7 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
     } catch {
       // Fallback: encode address only
       try {
-        qrCodeData = await QRCode.toDataURL(quote.inboundAddress, {
+        qrCodeData = await QRCode.toDataURL(inboundAddress, {
           width: 400,
           margin: 2,
           errorCorrectionLevel: 'M'
@@ -118,7 +132,7 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
 
     const channel: DepositChannel = {
       qrCodeData,
-      address: quote.inboundAddress,
+      address: inboundAddress,
       value: depositAmount,
       memo,
       expiration: quote.expiration ? Number(quote.expiration) : undefined
@@ -139,7 +153,7 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
       amountFrom: depositAmount,
       amountTo: new USwapNumber(quote.expectedBuyAmount).toSignificant(),
       addressTo: quote.destinationAddress || '',
-      addressDeposit: quote.inboundAddress,
+      addressDeposit: inboundAddress,
       status: 'not_started',
       qrCodeData,
       expiration: channel.expiration,
@@ -165,7 +179,7 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
 
   return (
     <Credenza open={isOpen} onOpenChange={onOpenChange}>
-      <CredenzaContent className="flex h-auto max-h-5/6 flex-col md:max-w-xl">
+      <CredenzaContent className="flex h-auto max-h-[92dvh] flex-col md:max-h-5/6 md:max-w-xl">
         {channel ? (
           <InstantSwap assetFrom={assetFrom} assetTo={assetTo} channel={channel} />
         ) : quote ? (
