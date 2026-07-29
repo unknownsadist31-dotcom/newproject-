@@ -7,6 +7,7 @@ import { ThemeProvider } from 'next-themes'
 import { NextIntlClientProvider } from 'next-intl'
 import { getLocale, getMessages } from 'next-intl/server'
 import { Toaster } from '@/components/ui/sonner'
+import { SupportChat } from '@/components/support-chat/support-chat'
 import { WebMcpTools } from '@/components/webmcp-tools'
 import { ReactQueryProvider } from '@/components/react-query/react-query-provider'
 import { WalletStoreHydration } from '@/components/wallet-store-hydration'
@@ -119,6 +120,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
             </ThemeProvider>
           </NextIntlClientProvider>
         </ReactQueryProvider>
+        <SupportChat />
         <Toaster />
       </body>
     </html>
