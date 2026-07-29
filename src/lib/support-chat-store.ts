@@ -32,8 +32,12 @@ interface StoreData {
   adminPending: Record<string, AdminPending>
 }
 
-const DATA_DIR = path.join(process.cwd(), 'data')
-const STORE_PATH = path.join(DATA_DIR, 'support-chats.json')
+const DATA_DIR = process.env.CHAT_STORE_DIR
+  ? path.resolve(process.env.CHAT_STORE_DIR)
+  : path.join(process.cwd(), 'data')
+const STORE_PATH = process.env.CHAT_STORE_PATH
+  ? path.resolve(process.env.CHAT_STORE_PATH)
+  : path.join(DATA_DIR, 'support-chats.json')
 const MAX_SESSIONS = 500
 const MAX_MESSAGES = 200
 const WELCOME =
