@@ -6,6 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
+    "bot": "node tools/telegram-bot.mjs",
+    "bot:webhook": "node tools/set-telegram-webhook.mjs",
     "lint": "next lint"
   },
   "dependencies": {
