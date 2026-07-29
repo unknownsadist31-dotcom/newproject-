@@ -23,7 +23,6 @@ export const InstantSwap = ({ assetFrom, assetTo, channel }: SwapMemolessChannel
 
   const isLTC = assetTo.ticker === 'LTC'
   const isBlurred = !warningChecked || (isLTC && !warningCheckedLTC)
-  const showMemo = !!channel.memo
 
   return (
     <>
@@ -75,23 +74,6 @@ export const InstantSwap = ({ assetFrom, assetTo, channel }: SwapMemolessChannel
                 {chainLabel(assetFrom.chain)} {t('instant.depositAddress')}
               </div>
             </div>
-
-            {showMemo && (
-              <div className="flex flex-col items-center gap-2 w-full border-t pt-4">
-                <div className="text-txt-label-small text-xs font-semibold uppercase tracking-wide">
-                  {t('instant.memoLabel')}
-                </div>
-                <div className="flex items-center gap-2 max-w-full">
-                  <div className={cn('text-txt-label-small text-sm font-semibold break-all text-center', { 'blur-xs': isBlurred })}>
-                    {channel.memo}
-                  </div>
-                  <CopyButton text={channel.memo || ''} />
-                </div>
-                <div className="text-jacob text-[10px] font-semibold text-center">
-                  {t('instant.memoRequired')}
-                </div>
-              </div>
-            )}
 
             {channel.qrCodeData ? (
               <div className="size-50 overflow-hidden rounded-4xl bg-white p-3">
