@@ -28,6 +28,9 @@ interface SwapRecipientProps {
   onFetchQuote: (quote: ThorSwapQuoteRoute) => void
 }
 
+// Strip all whitespace (spaces, newlines) that mobile keyboards/clipboards add on paste
+const sanitizeAddress = (value: string) => value.replace(/\s+/g, '')
+
 export const SwapRecipient = ({ provider, onFetchQuote }: SwapRecipientProps) => {
   const t = useTranslations('swap')
   const isMobile = useIsMobile()
@@ -164,9 +167,8 @@ export const SwapRecipient = ({ provider, onFetchQuote }: SwapRecipientProps) =>
             placeholder={isMobile ? undefined : t('recipient.addressPlaceholder', { chain: chainLabel(asset.chain) })}
             value={address}
             aria-invalid={!isValid}
-            onChange={e => setAddress(e.target.value)}
+            onChange={e => setAddress(sanitizeAddress(e.target.value))}
             className={cn('bg-input-modal-bg-active border-border-sub-container-modal-low', { 'pl-12': currentOption })}
-            tabIndex={isMobile ? -1 : 0}
           />
 
           {currentOption && (
@@ -199,10 +201,9 @@ export const SwapRecipient = ({ provider, onFetchQuote }: SwapRecipientProps) =>
 
               <ThemeButton
                 variant="secondarySmall"
-                className="hidden md:block"
                 onClick={() => {
                   navigator.clipboard.readText().then(text => {
-                    setAddress(text)
+                    setAddress(sanitizeAddress(text))
                   })
                 }}
               >
