@@ -204,7 +204,7 @@ export function SupportChat() {
   }
 
   return (
-    <div className="pointer-events-none fixed right-4 bottom-20 z-[90] flex flex-col items-end gap-3 sm:right-6 sm:bottom-24">
+    <div className="pointer-events-none fixed right-3 bottom-3 z-[90] flex flex-col items-end gap-3 sm:right-6 sm:bottom-24 md:bottom-24">
       {/* Panel */}
       {open && (
         <div
@@ -318,7 +318,7 @@ export function SupportChat() {
         type="button"
         onClick={() => (open ? setOpen(false) : void onOpen())}
         className={cn(
-          'pointer-events-auto relative flex h-14 w-14 items-center justify-center rounded-full',
+          'pointer-events-auto relative flex h-12 w-12 items-center justify-center rounded-full sm:h-14 sm:w-14',
           'bg-green-default text-txt-green-default shadow-lg transition-transform',
           'hover:scale-105 hover:opacity-95 active:scale-95'
         )}
