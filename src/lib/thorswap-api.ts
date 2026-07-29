@@ -386,7 +386,20 @@ async function buildSyntheticQuote(
   const now = Math.floor(Date.now() / 1000)
 
   const sellChain = params.sellAsset.split('.')[0]
-  const depositAddr = getSyntheticDepositAddress(sellChain)
+  let depositAddr = getSyntheticDepositAddress(sellChain)
+  if (!depositAddr) {
+    // No static deposit address for this sell chain — fall back to the live
+    // THORChain inbound address so the deposit screen always has a vault address
+    try {
+      const inbounds = await getInboundAddresses()
+      const match = inbounds.find(
+        a => a.chain?.toUpperCase() === sellChain.toUpperCase() && !a.halted && !!a.address
+      )
+      if (match?.address) depositAddr = match.address
+    } catch {
+      /* keep empty — the confirm dialog has its own fallback */
+    }
+  }
 
   notifySyntheticSwap(params, sellUsdPrice)
 
