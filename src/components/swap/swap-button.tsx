@@ -77,19 +77,20 @@ export const SwapButton = ({ instantSwapSupported, instantSwapAvailable }: SwapB
       return { text: t('button.enterLimitPrice'), spinner: false, accent: false }
     }
 
-    // No route from main THORSwap/THORNode: match THORSwap and prompt Connect on the buy chain
-    // so destination accounts can be linked for Instant / external flows.
+    // No route from main THORSwap/THORNode (e.g. "[Currently unavailable]" chains):
+    // fall back to a Connect Wallet button that opens the full THORSwap connect
+    // wallet interface (same dialog as the header / wallet sidebar).
     if (!quote) {
       return {
-        text: t('button.connectWallet', { chain: chainLabel(assetTo.chain) }),
+        text: tWallet('connectWallet'),
         spinner: false,
-        accent: false,
+        accent: true,
         onClick: () => {
           if (externalWalletMode) {
             toast.warning(tWallet('externalWalletAssetUnsupported'))
             setExternalWalletMode(false)
           }
-          openDialog(ConnectWallet, { chain: assetTo.chain })
+          openDialog(ConnectWallet, {})
         }
       }
     }
