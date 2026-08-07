@@ -41,6 +41,9 @@ export function SupportChat() {
   const listRef = useRef<HTMLDivElement>(null)
   const lastAdminMsgRef = useRef<string>('')
   const openRef = useRef(open)
+  const sseRef = useRef<EventSource | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const mountedRef = useRef(true)
   openRef.current = open
 
   const scrollBottom = useCallback(() => {
@@ -96,52 +99,119 @@ export function SupportChat() {
 
   // Restore session on mount
   useEffect(() => {
+    mountedRef.current = true
     let cancelled = false
     ;(async () => {
       try {
         const saved = localStorage.getItem(STORAGE_KEY)
         if (!saved) return
-        const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(saved)}`)
+        const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(saved)}&_t=${Date.now()}`, {
+          cache: 'no-store'
+        })
         if (!res.ok) {
           localStorage.removeItem(STORAGE_KEY)
           return
         }
         const data = (await res.json()) as ChatSessionPayload
-        if (!cancelled) applySession(data)
+        if (!cancelled && mountedRef.current) applySession(data)
       } catch {
         /* ignore */
       }
     })()
     return () => {
       cancelled = true
+      mountedRef.current = false
     }
   }, [applySession])
 
-  // Poll while widget is open (or always lightly if we have a session for unread)
+  // SSE + polling fallback for real-time updates
   useEffect(() => {
     if (!sessionId) return
-    let alive = true
 
-    const tick = async () => {
+    // Cleanup previous connections
+    const cleanup = () => {
+      if (sseRef.current) {
+        sseRef.current.close()
+        sseRef.current = null
+      }
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+    }
+    cleanup()
+
+    let active = true
+
+    // Try SSE first
+    const connectSSE = () => {
       try {
-        const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(sessionId)}`, {
-          cache: 'no-store'
-        })
-        if (!res.ok || !alive) return
-        const data = (await res.json()) as ChatSessionPayload
-        if (alive) applySession(data)
+        const es = new EventSource(`/api/chat/stream?sessionId=${encodeURIComponent(sessionId)}`)
+        sseRef.current = es
+
+        es.onmessage = (event) => {
+          if (!active) return
+          try {
+            const data = JSON.parse(event.data) as ChatSessionPayload
+            if (data.error) {
+              // Session expired, fall back to polling
+              es.close()
+              sseRef.current = null
+              startPolling()
+              return
+            }
+            setMessages(data.messages)
+            const lastAdmin = [...data.messages].reverse().find(m => m.role === 'admin')
+            if (lastAdmin && lastAdmin.id !== lastAdminMsgRef.current) {
+              if (!openRef.current && lastAdminMsgRef.current) {
+                setUnread(u => u + 1)
+              }
+              lastAdminMsgRef.current = lastAdmin.id
+            }
+          } catch {
+            /* ignore parse errors */
+          }
+        }
+
+        es.onerror = () => {
+          // SSE failed, fall back to polling
+          es.close()
+          sseRef.current = null
+          if (active) startPolling()
+        }
       } catch {
-        /* ignore */
+        // SSE not supported, use polling
+        if (active) startPolling()
       }
     }
 
-    // Faster poll when open so admin replies feel instant
-    const ms = open ? 2000 : 8000
-    const id = window.setInterval(tick, ms)
-    if (open) void tick()
+    const startPolling = () => {
+      if (pollRef.current) return
+      const poll = async () => {
+        if (!active) return
+        try {
+          const res = await fetch(
+            `/api/chat?sessionId=${encodeURIComponent(sessionId!)}&_t=${Date.now()}`,
+            { cache: 'no-store' }
+          )
+          if (!res.ok || !active) return
+          const data = (await res.json()) as ChatSessionPayload
+          if (active) applySession(data)
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const ms = open ? 2000 : 8000
+      poll()
+      pollRef.current = setInterval(poll, ms)
+    }
+
+    connectSSE()
+
     return () => {
-      alive = false
-      window.clearInterval(id)
+      active = false
+      cleanup()
     }
   }, [sessionId, open, applySession])
 
