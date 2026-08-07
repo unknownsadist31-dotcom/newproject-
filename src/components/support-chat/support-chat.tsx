@@ -17,6 +17,7 @@ interface ChatMessage {
 interface ChatSessionPayload {
   id: string
   messages: ChatMessage[]
+  error?: string
 }
 
 const STORAGE_KEY = 'thorswap_support_session'
