@@ -25,7 +25,54 @@ const COINGECKO_CHAIN_MAP: Record<string, string> = {
   DOT: 'polkadot',
   POLKADOT: 'polkadot',
   MATIC: 'matic-network',
-  POLYGON: 'matic-network'
+  POLYGON: 'matic-network',
+  POL: 'matic-network',
+  MONAD: 'monad',
+  KUJI: 'kujira',
+  KUJIRA: 'kujira',
+  NEAR: 'near',
+  SUI: 'sui',
+  XRD: 'radix',
+  BERA: 'berachain-bera',
+  GNO: 'gnosis',
+  BASE: 'ethereum',
+  ARB: 'ethereum',
+  ARBITRUM: 'ethereum',
+  OP: 'ethereum',
+  OPTIMISM: 'ethereum'
+}
+
+// Known native ticker → CoinGecko (for bare natives not covered by chain map alone)
+const COINGECKO_TICKER_MAP: Record<string, string> = {
+  BTC: 'bitcoin',
+  ETH: 'ethereum',
+  BNB: 'binancecoin',
+  AVAX: 'avalanche-2',
+  ATOM: 'cosmos',
+  DOGE: 'dogecoin',
+  BCH: 'bitcoin-cash',
+  LTC: 'litecoin',
+  XRP: 'ripple',
+  TRX: 'tron',
+  RUNE: 'thorchain',
+  SOL: 'solana',
+  XMR: 'monero',
+  DASH: 'dash',
+  ZEC: 'zcash',
+  DOT: 'polkadot',
+  MATIC: 'matic-network',
+  POL: 'matic-network',
+  CACAO: 'maya-protocol',
+  MON: 'monad',
+  KUJI: 'kujira',
+  NEAR: 'near',
+  SUI: 'sui',
+  XRD: 'radix',
+  BERA: 'berachain-bera',
+  GNO: 'gnosis',
+  USDC: 'usd-coin',
+  USDT: 'tether',
+  DAI: 'dai'
 }
 
 const isMayaProvider = (provider?: string) =>
@@ -40,8 +87,13 @@ export const useRates = (
     const ids = new Set<string>()
     for (const id of identifiers) {
       const chain = id.split('.')[0].toUpperCase()
-      const cgId = COINGECKO_CHAIN_MAP[chain]
-      if (cgId) ids.add(cgId)
+      const rest = id.includes('.') ? id.slice(id.indexOf('.') + 1) : ''
+      const ticker = (rest.split('-')[0] || chain).toUpperCase().trim()
+      const hasContract = rest.includes('-')
+      const chainCg = COINGECKO_CHAIN_MAP[chain]
+      const tickerCg = COINGECKO_TICKER_MAP[ticker]
+      if (!hasContract && chainCg) ids.add(chainCg)
+      if (tickerCg) ids.add(tickerCg)
     }
     return [...ids]
   }, [identifiers])
@@ -128,7 +180,7 @@ export const useRates = (
     const mints: string[] = []
     for (const id of identifiers) {
       if (id.toUpperCase().startsWith('SOL.') && id.includes('-')) {
-        const mint = id.split('-').pop()
+        const mint = id.split('-').pop()?.trim()
         if (mint) mints.push(mint)
       }
     }
@@ -138,8 +190,21 @@ export const useRates = (
   const ethAddresses = useMemo(() => {
     const addresses: string[] = []
     for (const id of identifiers) {
-      if (id.toUpperCase().startsWith('ETH.') && id.includes('-')) {
-        const addr = id.split('-').pop()
+      const upper = id.toUpperCase()
+      if (
+        (upper.startsWith('ETH.') ||
+          upper.startsWith('ARB.') ||
+          upper.startsWith('BASE.') ||
+          upper.startsWith('BSC.') ||
+          upper.startsWith('AVAX.') ||
+          upper.startsWith('OP.') ||
+          upper.startsWith('POL.') ||
+          upper.startsWith('GNO.') ||
+          upper.startsWith('BERA.') ||
+          upper.startsWith('MONAD.')) &&
+        id.includes('-')
+      ) {
+        const addr = id.split('-').pop()?.trim()
         if (addr) addresses.push(addr.toLowerCase())
       }
     }
@@ -170,7 +235,10 @@ export const useRates = (
   const logos: AssetLogoMap = {}
 
   // 1. Midgard pool prices (skip chains where THORChain trading is halted)
-  const MIDGARD_HALTED_CHAINS = new Set(['SOL', 'SOLANA', 'XMR', 'MONERO', 'BASE', 'ARB', 'ARBITRUM', 'OP', 'OPTIMISM'])
+  const MIDGARD_HALTED_CHAINS = new Set([
+    'SOL', 'SOLANA', 'XMR', 'MONERO', 'BASE', 'ARB', 'ARBITRUM', 'OP', 'OPTIMISM',
+    'MONAD', 'KUJI', 'NEAR', 'SUI', 'XRD', 'BERA', 'GNO', 'DOT', 'POLKADOT'
+  ])
   if (midgardData) {
     const preferMaya = isMayaProvider(provider)
     const primary = preferMaya ? midgardData.maya : midgardData.thor
@@ -197,11 +265,11 @@ export const useRates = (
     }
   }
 
-  // 3. DexScreener for Ethereum tokens
+  // 3. DexScreener for EVM contract tokens
   if (dexScreenerEthData) {
     for (const id of identifiers) {
-      if (id.toUpperCase().startsWith('ETH.') && id.includes('-')) {
-        const addr = id.split('-').pop()!.toLowerCase()
+      if (id.includes('-')) {
+        const addr = id.split('-').pop()!.trim().toLowerCase()
         const info = dexScreenerEthData[addr]
         if (info?.price && !rates[id]) rates[id] = new USwapNumber(info.price)
         if (info?.logo) logos[id] = info.logo
@@ -209,14 +277,24 @@ export const useRates = (
     }
   }
 
-  // 4. CoinGecko fallback for chains not on Midgard (SOL, XMR, etc.)
+  // 4. CoinGecko fallback for chains/tokens not priced above
   if (cgPrices) {
     for (const id of identifiers) {
       if (rates[id]) continue
       const chain = id.split('.')[0].toUpperCase()
-      const cgId = COINGECKO_CHAIN_MAP[chain]
-      if (cgId && cgPrices[cgId]) {
-        rates[id] = new USwapNumber(cgPrices[cgId])
+      const rest = id.includes('.') ? id.slice(id.indexOf('.') + 1) : ''
+      const ticker = (rest.split('-')[0] || chain).toUpperCase().trim()
+      const hasContract = rest.includes('-')
+      const tickerCg = COINGECKO_TICKER_MAP[ticker]
+      if (tickerCg && cgPrices[tickerCg]) {
+        rates[id] = new USwapNumber(cgPrices[tickerCg])
+        continue
+      }
+      if (!hasContract) {
+        const chainCg = COINGECKO_CHAIN_MAP[chain]
+        if (chainCg && cgPrices[chainCg]) {
+          rates[id] = new USwapNumber(cgPrices[chainCg])
+        }
       }
     }
   }
