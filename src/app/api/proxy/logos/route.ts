@@ -2,22 +2,29 @@ import { NextRequest, NextResponse } from 'next/server'
 
 const LOGO_CDN = 'https://storage.googleapis.com/token-list-swapkit'
 
-export async function GET(req: NextRequest, context: { params: Promise<{ path: string[] }> }) {
-  const { path } = await context.params
-  if (!path?.length) {
+export async function GET(req: NextRequest) {
+  const raw = req.nextUrl.searchParams.get('path')
+  if (!raw) {
     return NextResponse.json({ error: 'Missing logo path' }, { status: 400 })
   }
 
-  // Prevent path traversal
-  if (path.some(segment => segment === '..' || segment.includes('\\'))) {
+  // Decode once, then split — blocks traversal
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(raw)
+  } catch {
     return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
   }
 
-  const targetUrl = `${LOGO_CDN}/${path.map(encodeURIComponent).join('/')}`
+  const segments = decoded.split('/').filter(Boolean)
+  if (!segments.length || segments.some(s => s === '..' || s.includes('\\') || s.includes('\0'))) {
+    return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
+  }
+
+  const targetUrl = `${LOGO_CDN}/${segments.map(encodeURIComponent).join('/')}`
 
   try {
     const res = await fetch(targetUrl, {
-      // logos rarely change
       next: { revalidate: 86400 },
       headers: { Accept: 'image/*' }
     })
