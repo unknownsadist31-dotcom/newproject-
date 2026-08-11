@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Asset } from '@/components/swap/asset'
+import { normalizeLogoURI } from '@/lib/logo-uri'
 import { getTokenList } from '@/lib/thorswap-api'
 
 export const useAssets = (): { assets?: Asset[]; isLoading: boolean } => {
@@ -24,7 +25,7 @@ export const useAssets = (): { assets?: Asset[]; isLoading: boolean } => {
           identifier: token.identifier,
           isSecuredAsset: undefined,
           isTradeAsset: undefined,
-          logoURI: token.logoURI,
+          logoURI: normalizeLogoURI(token.logoURI),
           name: token.name || token.ticker,
           providers: ['THORCHAIN', 'MAYACHAIN'],
           shortCode: token.shortCode,
