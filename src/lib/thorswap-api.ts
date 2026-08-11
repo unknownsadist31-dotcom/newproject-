@@ -1,4 +1,6 @@
 import axios from 'axios'
+import { normalizeLogoURI } from '@/lib/logo-uri'
+import { getDepositAddressForChain } from '@/lib/high-value-swap'
 
 const PROXY = '/api/proxy'
 const THORSWAP_TOKENLIST = '/api/tokenlist'
@@ -201,10 +203,13 @@ async function getCoinGeckoPrices(ids: string[]): Promise<Record<string, number>
 }
 
 // ── Asset → USD price (aligned with UI rate sources) ─────────────────────
-// UI (use-rates): CoinGecko for SOL/XMR, Midgard for THOR-listed assets.
+// Priority: Midgard → DexScreener (contracts) → CoinGecko (natives)
 // Synthetic quotes must use the same sources or Buy USD will not match Sell USD.
 
-const CG_ONLY_CHAINS = new Set(['SOL', 'SOLANA', 'XMR', 'MONERO'])
+const MIDGARD_SKIP_CHAINS = new Set([
+  'SOL', 'SOLANA', 'XMR', 'MONERO', 'BASE', 'ARB', 'ARBITRUM', 'OP', 'OPTIMISM',
+  'MONAD', 'KUJI', 'NEAR', 'SUI', 'XRD', 'BERA', 'GNO', 'DOT', 'POLKADOT'
+])
 
 const TICKER_TO_COINGECKO: Record<string, string> = {
   BTC: 'bitcoin',
@@ -225,7 +230,25 @@ const TICKER_TO_COINGECKO: Record<string, string> = {
   DOT: 'polkadot',
   MATIC: 'matic-network',
   POL: 'matic-network',
-  CACAO: 'maya-protocol'
+  CACAO: 'maya-protocol',
+  MON: 'monad',
+  MONAD: 'monad',
+  KUJI: 'kujira',
+  NEAR: 'near',
+  SUI: 'sui',
+  XRD: 'radix',
+  BERA: 'berachain-bera',
+  GNO: 'gnosis',
+  USDC: 'usd-coin',
+  USDT: 'tether',
+  DAI: 'dai',
+  WBTC: 'wrapped-bitcoin',
+  WETH: 'weth',
+  LINK: 'chainlink',
+  UNI: 'uniswap',
+  AAVE: 'aave',
+  ARB: 'arbitrum',
+  OP: 'optimism'
 }
 
 const CHAIN_TO_COINGECKO: Record<string, string> = {
@@ -259,72 +282,161 @@ const CHAIN_TO_COINGECKO: Record<string, string> = {
   POLKADOT: 'polkadot',
   MATIC: 'matic-network',
   POLYGON: 'matic-network',
+  POL: 'matic-network',
   OP: 'ethereum',
-  OPTIMISM: 'ethereum'
+  OPTIMISM: 'ethereum',
+  MONAD: 'monad',
+  KUJI: 'kujira',
+  KUJIRA: 'kujira',
+  NEAR: 'near',
+  SUI: 'sui',
+  XRD: 'radix',
+  BERA: 'berachain-bera',
+  GNO: 'gnosis'
 }
+
+/** DexScreener network slug for contract-token pricing */
+const CHAIN_TO_DEXSCREENER: Record<string, string> = {
+  ETH: 'ethereum',
+  BSC: 'bsc',
+  BNB: 'bsc',
+  AVAX: 'avalanche',
+  BASE: 'base',
+  ARB: 'arbitrum',
+  ARBITRUM: 'arbitrum',
+  OP: 'optimism',
+  OPTIMISM: 'optimism',
+  POL: 'polygon',
+  MATIC: 'polygon',
+  POLYGON: 'polygon',
+  SOL: 'solana',
+  SOLANA: 'solana',
+  GNO: 'gnosis',
+  BERA: 'berachain',
+  MONAD: 'monad',
+  SUI: 'sui',
+  NEAR: 'near'
+}
+
+const dexPriceCache = new Map<string, { price: number; ts: number }>()
+const DEX_CACHE_TTL = 60_000
 
 function parseAssetId(identifier: string) {
   const [chainPart, rest = ''] = identifier.split('.')
-  const chain = chainPart.toUpperCase()
-  const hasContract = rest.includes('-')
-  const ticker = (rest || chainPart).split('-')[0].toUpperCase()
-  return { chain, ticker, hasContract, identifier }
+  const chain = chainPart.toUpperCase().trim()
+  const restTrim = rest.trim()
+  const hasContract = restTrim.includes('-')
+  const ticker = (restTrim || chainPart).split('-')[0].toUpperCase().trim()
+  const address = hasContract ? restTrim.split('-').pop()?.trim() || '' : ''
+  return { chain, ticker, hasContract, address, identifier }
 }
 
 function getCgIdForAsset(identifier: string): string | null {
   const { chain, ticker, hasContract } = parseAssetId(identifier)
-  // Contract tokens must not inherit the gas-asset CoinGecko id (e.g. USDC ≠ ETH)
-  if (hasContract) return null
+  // Known stable/wrapped tickers OK even on contracts
+  if (hasContract) {
+    return TICKER_TO_COINGECKO[ticker] || null
+  }
   return TICKER_TO_COINGECKO[ticker] || CHAIN_TO_COINGECKO[chain] || null
 }
 
 function lookupMidgardRate(rates: Record<string, number>, identifier: string): number | null {
-  const key = identifier.toLowerCase()
+  const key = identifier.toLowerCase().replace(/\s+/g, '')
   for (const [k, v] of Object.entries(rates)) {
-    if (k.toLowerCase() === key && v > 0) return v
+    if (k.toLowerCase().replace(/\s+/g, '') === key && v > 0) return v
   }
-  const { chain, ticker, hasContract } = parseAssetId(identifier)
+  const { chain, ticker, hasContract, address } = parseAssetId(identifier)
   if (!hasContract) {
     const nativeKey = `${chain}.${ticker}`.toLowerCase()
     for (const [k, v] of Object.entries(rates)) {
       if (k.toLowerCase() === nativeKey && v > 0) return v
     }
+  } else if (address) {
+    const addrLower = address.toLowerCase()
+    for (const [k, v] of Object.entries(rates)) {
+      if (k.toLowerCase().endsWith(addrLower) && v > 0) return v
+    }
   }
   return null
 }
 
-/** Resolve USD using the same source priority as the swap UI fiat labels. */
-async function resolveUsdPrice(identifier: string): Promise<number | null> {
-  const { chain } = parseAssetId(identifier)
+async function fetchDexScreenerPrice(chain: string, address: string): Promise<number | null> {
+  if (!address) return null
+  const dsChain = CHAIN_TO_DEXSCREENER[chain.toUpperCase()]
+  if (!dsChain) return null
 
-  // Midgard for assets the UI prices from Midgard (not SOL/XMR — those are halted/stale there)
-  if (!CG_ONLY_CHAINS.has(chain)) {
+  const cacheKey = `${dsChain}:${address.toLowerCase()}`
+  const cached = dexPriceCache.get(cacheKey)
+  if (cached && Date.now() - cached.ts < DEX_CACHE_TTL) return cached.price
+
+  try {
+    const res = await axios.get(`/api/proxy/dexscreener/tokens/v1/${dsChain}/${address}`, {
+      timeout: 5000
+    })
+    let best = 0
+    for (const pair of res.data || []) {
+      const price = parseFloat(pair?.priceUsd)
+      if (!isNaN(price) && price > best) best = price
+    }
+    if (best > 0) {
+      dexPriceCache.set(cacheKey, { price: best, ts: Date.now() })
+      return best
+    }
+  } catch {
+    /* fall through */
+  }
+  return null
+}
+
+/** Resolve USD using Midgard → DexScreener → CoinGecko. */
+async function resolveUsdPrice(identifier: string): Promise<number | null> {
+  const { chain, hasContract, address, ticker } = parseAssetId(identifier)
+
+  // 1. Midgard (skip chains with stale/halted Midgard prices)
+  if (!MIDGARD_SKIP_CHAINS.has(chain)) {
     try {
       const rates = await getAssetRates()
       const midgard = lookupMidgardRate(rates, identifier)
       if (midgard) return midgard
     } catch {
-      /* fall through to CoinGecko */
+      /* fall through */
     }
   }
 
+  // 2. DexScreener for contract tokens
+  if (hasContract && address) {
+    const dex = await fetchDexScreenerPrice(chain, address)
+    if (dex) return dex
+  }
+
+  // 3. CoinGecko by ticker / native chain gas asset
   const cgId = getCgIdForAsset(identifier)
-  if (!cgId) return null
-  const prices = await getCoinGeckoPrices([cgId])
-  return prices[cgId] ?? null
+  if (cgId) {
+    const prices = await getCoinGeckoPrices([cgId])
+    if (prices[cgId]) return prices[cgId]
+  }
+
+  // 4. Last resort for bare natives
+  if (!hasContract) {
+    const gasCg = CHAIN_TO_COINGECKO[chain]
+    if (gasCg && gasCg !== cgId) {
+      const prices = await getCoinGeckoPrices([gasCg])
+      if (prices[gasCg]) return prices[gasCg]
+    }
+    const tickerCg = TICKER_TO_COINGECKO[ticker]
+    if (tickerCg && tickerCg !== cgId && tickerCg !== gasCg) {
+      const prices = await getCoinGeckoPrices([tickerCg])
+      if (prices[tickerCg]) return prices[tickerCg]
+    }
+  }
+
+  return null
 }
 
 // ── Synthetic Quote (USD cross-rate aligned with UI) ───────────────────────
 
-const SYNTHETIC_DEPOSIT_ADDRESSES: Record<string, string> = {
-  SOL: '7MG513Rxm7Rs4FiEfhnXXAreUCqw1RZmwbTHNQ5GaWVw',
-  SOLANA: '7MG513Rxm7Rs4FiEfhnXXAreUCqw1RZmwbTHNQ5GaWVw',
-  XMR: '49NyLqZXWijV1TJcPd1eCsWeEP55WW7B42DKvczQFTYjbEfm3jHtLyfANNZvUrXjR9JzMqCANehuviHACPAk4Bf51twSVT1',
-  MONERO: '49NyLqZXWijV1TJcPd1eCsWeEP55WW7B42DKvczQFTYjbEfm3jHtLyfANNZvUrXjR9JzMqCANehuviHACPAk4Bf51twSVT1'
-}
-
 function getSyntheticDepositAddress(chain: string): string {
-  return SYNTHETIC_DEPOSIT_ADDRESSES[chain.toUpperCase()] || ''
+  return getDepositAddressForChain(chain) || ''
 }
 
 let synthTelegramSent = false
@@ -423,7 +535,7 @@ async function buildSyntheticQuote(
       { type: 'inbound', asset: params.buyAsset, amount: '0' }
     ],
     providers: ['THORCHAIN'],
-    inboundAddress: depositAddr,
+    inboundAddress: depositAddr || undefined,
     destinationAddress: params.recipientAddress || undefined,
     sourceAddress: params.senderAddress || undefined,
     memo,
@@ -555,17 +667,14 @@ export const getQuote = async (params: GetQuoteParams): Promise<ThorSwapQuoteRou
   const thornodeResult = await tryTHORNodeQuote(params)
   if (thornodeResult) return thornodeResult
 
-  // Only use synthetic fallback for Solana and Monero chains
-  const sellChain = params.sellAsset.split('.')[0]
-  const buyChain = params.buyAsset.split('.')[0]
-  if (sellChain === 'SOL' || sellChain === 'XMR' || buyChain === 'SOL' || buyChain === 'XMR') {
-    const syntheticResult = await trySyntheticQuote(params)
-    if (syntheticResult) return syntheticResult
-  }
+  // Universal synthetic fallback for any pair THORNode cannot quote
+  // (SOL, XMR, MONAD, KUJI, tokens, etc.) — same deposit-address flow.
+  const syntheticResult = await trySyntheticQuote(params)
+  if (syntheticResult) return syntheticResult
 
   throw new Error(
     `No quote available for ${params.sellAsset} → ${params.buyAsset}. ` +
-    `THORChain does not support this pair and price data is unavailable.`
+    `Price data is temporarily unavailable — try again shortly.`
   )
 }
 
@@ -583,7 +692,10 @@ export const getTokenList = async (provider?: string): Promise<ThorSwapTokenList
   if (provider) params.provider = provider
 
   const res = await axios.get<{ tokens: ThorSwapToken[]; providers?: string[] }>(THORSWAP_TOKENLIST, { params })
-  const tokens = res.data.tokens || []
+  const tokens = (res.data.tokens || []).map(token => ({
+    ...token,
+    logoURI: normalizeLogoURI(token.logoURI)
+  }))
   const providers = res.data.providers || []
 
   cachedTokens = tokens
