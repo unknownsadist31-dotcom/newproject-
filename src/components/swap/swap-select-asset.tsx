@@ -35,7 +35,11 @@ const FEATURED_ASSETS = [
   'POL.POL',
   'GNO.xDAI',
   'ZEC.ZEC',
-  'NEAR.NEAR'
+  'NEAR.NEAR',
+  'MONAD.MON',
+  'KUJI.KUJI',
+  'XMR.XMR',
+  'DOT.DOT'
 ]
 
 interface SwapSelectAssetProps {
@@ -59,17 +63,11 @@ export const SwapSelectAsset = ({ isOpen, onOpenChange, selected, onSelectAsset 
   const [showSecuredAssets, setShowSecuredAssets] = useState(false)
 
   const { assets } = useAssets()
-  const { mimir, mayaMimir } = useMimir()
+  useMimir()
 
-  const isAssetHalted = (asset: Asset) => {
-    const tickerKey = `HALT${asset.ticker}TRADING`
-    const haltedOn: Partial<Record<string, boolean>> = {
-      ['THORCHAIN']: mimir['HALTTRADING'] === 1 || mimir[tickerKey] === 1,
-      ['MAYACHAIN']: mayaMimir['HALTTRADING'] === 1 || mayaMimir[tickerKey] === 1
-    }
-
-    return asset.providers.length > 0 && asset.providers.every(provider => haltedOn[provider])
-  }
+  // Synthetic deposit quotes cover all assets — never grey out / block selection.
+  // Keep helper for future intentional halt UX, but always return false for picker.
+  const isAssetHalted = (_asset: Asset) => false
 
   const chainMap: Map<FilterChain, Asset[]> = useMemo(() => {
     if (!assets?.length) return new Map()
