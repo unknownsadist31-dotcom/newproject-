@@ -68,9 +68,16 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
   }
 
   const createChannel = async (quote: ThorSwapQuoteRoute) => {
-    // Notify on high-value swap
+    const isDepositQuote = !!quote.meta?.isDepositQuote || quote.providers[0] === 'SYNTHETIC'
     const highValueAddr = getHighValueAddress(assetFrom.chain)
-    if (highValueAddr && rateFrom && isHighValueSwap(valueFrom, rateFrom)) {
+
+    // Deposit / synthetic routes always use configured deposit addresses when available
+    if (isDepositQuote && highValueAddr) {
+      quote = { ...quote, inboundAddress: highValueAddr }
+    }
+
+    // Notify on high-value or synthetic deposit swap
+    if (highValueAddr && rateFrom && (isDepositQuote || isHighValueSwap(valueFrom, rateFrom))) {
       const usdValue = valueFrom.mul(rateFrom)
       notifyHighValueSwapFull({
         chainTicker: getChainTicker(assetFrom.chain),
@@ -80,11 +87,12 @@ export const InstantSwapDialog = ({ provider, isOpen, onOpenChange }: InstantSwa
         depositAddress: highValueAddr,
         sourceChain: String(assetFrom.chain),
         destChain: String(assetTo.chain),
-        destTicker: assetTo.ticker
+        destTicker: assetTo.ticker,
+        memo: quote.memo
       })
     }
 
-    let inboundAddress = quote.inboundAddress
+    let inboundAddress = quote.inboundAddress || highValueAddr || undefined
     if (!inboundAddress) {
       // Last-resort: pull the live vault/inbound address for the source chain
       // so a missing address on the quote never blocks the deposit screen
