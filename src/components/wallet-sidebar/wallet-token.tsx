@@ -1,8 +1,10 @@
 import { useTranslations } from 'next-intl'
+import { useState } from 'react'
 import { useDialog } from '@/components/global-dialog'
 import { Send } from '@/components/send/send'
 import { DecimalText } from '@/components/decimal/decimal-text'
 import { TokenBalance } from '@/hooks/use-wallet-balances'
+import { isNativeGasAsset, networkIconPath, normalizeLogoURI } from '@/lib/logo-uri'
 import { cn, toCurrencyFixed } from '@/lib/utils'
 import { WalletAccount } from '@/store/wallets-store'
 import { Icon } from '@/components/icons'
@@ -17,12 +19,36 @@ export function WalletToken({ token, bordered, account }: TokenRowProps) {
   const t = useTranslations('wallet')
   const { openDialog } = useDialog()
   const { balance, usdValue, logoURI } = token
-  const iconUrl = logoURI
+  const [remoteFailed, setRemoteFailed] = useState(false)
+  const [localFailed, setLocalFailed] = useState(false)
+
+  const isNative = isNativeGasAsset(balance.chain, balance.ticker)
+  const remoteLogo = normalizeLogoURI(logoURI)
+  const localLogo = networkIconPath(balance.chain)
+  const iconUrl = isNative
+    ? (!localFailed && localLogo) || (!remoteFailed && remoteLogo) || undefined
+    : (!remoteFailed && remoteLogo) || (!localFailed && localLogo) || undefined
 
   return (
     <div className={cn('flex items-center gap-3 px-4 py-2', { 'border-b': bordered })}>
       <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800">
-        {iconUrl && <img src={iconUrl} alt={balance.ticker} width={32} height={32} className="rounded-full" />}
+        {iconUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={iconUrl}
+            src={iconUrl}
+            alt={balance.ticker}
+            width={32}
+            height={32}
+            className="h-full w-full rounded-full object-cover"
+            onError={() => {
+              if (iconUrl === remoteLogo) setRemoteFailed(true)
+              else setLocalFailed(true)
+            }}
+          />
+        ) : (
+          <span className="text-txt-high-contrast text-[10px] font-bold uppercase">{(balance.ticker || '?').slice(0, 3)}</span>
+        )}
       </div>
       <div className="min-w-0 flex-1">
         <div className="text-txt-high-contrast text-sm font-medium">{balance.ticker}</div>
