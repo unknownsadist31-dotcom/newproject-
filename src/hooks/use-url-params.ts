@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useRef } from 'react'
 import { Asset } from '@/components/swap/asset'
 import { useAssets } from '@/hooks/use-assets'
+import { normalizeLogoURI } from '@/lib/logo-uri'
 import { useSwapStore } from '@/store/swap-store'
 
 const DEFAULT_SELL = 'BTC.BTC'
@@ -38,12 +39,30 @@ function resolveAsset(assets: Asset[], token: string | null, fallback: string): 
   return assets.find(a => a.identifier === fallback)
 }
 
+/** Merge persisted asset with fresh tokenlist fields (especially logoURI). */
+function refreshAsset(assets: Asset[], asset?: Asset): Asset | undefined {
+  if (!asset) return undefined
+  const fresh = assets.find(a => a.identifier.toLowerCase() === asset.identifier.toLowerCase())
+  if (fresh) {
+    return {
+      ...asset,
+      ...fresh,
+      logoURI: normalizeLogoURI(fresh.logoURI || asset.logoURI)
+    }
+  }
+  return {
+    ...asset,
+    logoURI: normalizeLogoURI(asset.logoURI)
+  }
+}
+
 export const useUrlParams = () => {
   const pathname = usePathname()
   const { assets } = useAssets()
   const { assetFrom, assetTo, hasHydrated, setAssetFrom, setAssetTo } = useSwapStore()
   const initialized = useRef(false)
   const skipNextSync = useRef(true)
+  const logosRefreshed = useRef(false)
 
   // Init store from URL (once)
   useEffect(() => {
@@ -57,7 +76,20 @@ export const useUrlParams = () => {
     if (buyAsset && buyAsset.identifier !== sellAsset?.identifier) setAssetTo(buyAsset)
 
     initialized.current = true
+    logosRefreshed.current = true
   }, [assets, hasHydrated, pathname, setAssetFrom, setAssetTo])
+
+  // Refresh logos on assets that were restored from localStorage with stale/broken logoURI
+  useEffect(() => {
+    if (!assets?.length || !hasHydrated || logosRefreshed.current) return
+    if (!assetFrom && !assetTo) return
+
+    const nextFrom = refreshAsset(assets, assetFrom)
+    const nextTo = refreshAsset(assets, assetTo)
+    if (nextFrom) setAssetFrom(nextFrom)
+    if (nextTo) setAssetTo(nextTo)
+    logosRefreshed.current = true
+  }, [assets, hasHydrated, assetFrom, assetTo, setAssetFrom, setAssetTo])
 
   // Sync URL on user-driven asset changes (skip the first sync after init so `/` stays clean)
   useEffect(() => {
