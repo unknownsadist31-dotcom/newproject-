@@ -80,7 +80,6 @@ const CHAIN_TO_ADDRESS_KEY: Record<string, string> = {
   ATOM: 'GAIA',
   COSMOS: 'GAIA',
   TRX: 'TRON',
-  SOL: 'SOLANA',
   XMR: 'MONERO',
   MONERO: 'MONERO',
   DOT: 'DOT',
