@@ -1,6 +1,7 @@
 'use client'
 
 import { useTranslations } from 'next-intl'
+import { useState } from 'react'
 import { WalletOption } from '@tcswap/core'
 import { WalletIcon } from '@/components/wallet-icon'
 import { Credenza, CredenzaContent, CredenzaHeader, CredenzaTitle } from '@/components/ui/credenza'
@@ -10,6 +11,7 @@ import { tokenToAsset } from '@/components/send/send-helpers'
 import { TokenBalance, useWalletBalances } from '@/hooks/use-wallet-balances'
 import { WalletAccount } from '@/store/wallets-store'
 import { DecimalText } from '@/components/decimal/decimal-text'
+import { isNativeGasAsset, networkIconPath, normalizeLogoURI } from '@/lib/logo-uri'
 import { toCurrencyFixed } from '@/lib/utils'
 import { CheckIcon } from 'lucide-react'
 
@@ -20,6 +22,39 @@ export interface SelectTokenDialogProps {
   selectedAccount: WalletAccount
   onSelect: (token: TokenBalance, account: WalletAccount) => void
   filter?: (token: TokenBalance) => boolean
+}
+
+function TokenLogo({ token, ticker }: { token: TokenBalance; ticker: string }) {
+  const [remoteFailed, setRemoteFailed] = useState(false)
+  const [localFailed, setLocalFailed] = useState(false)
+  const isNative = isNativeGasAsset(token.balance.chain, token.balance.ticker)
+  const remoteLogo = normalizeLogoURI(token.logoURI)
+  const localLogo = networkIconPath(token.balance.chain)
+  const iconUrl = isNative
+    ? (!localFailed && localLogo) || (!remoteFailed && remoteLogo) || undefined
+    : (!remoteFailed && remoteLogo) || (!localFailed && localLogo) || undefined
+
+  return (
+    <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-black/10 dark:bg-white/10">
+      {iconUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={iconUrl}
+          src={iconUrl}
+          alt={ticker}
+          width={32}
+          height={32}
+          className="h-full w-full rounded-full object-cover"
+          onError={() => {
+            if (iconUrl === remoteLogo) setRemoteFailed(true)
+            else setLocalFailed(true)
+          }}
+        />
+      ) : (
+        <span className="text-txt-high-contrast text-[10px] font-bold uppercase">{(ticker || '?').slice(0, 3)}</span>
+      )}
+    </div>
+  )
 }
 
 export function SendSelectToken({ isOpen, onOpenChange, selected, selectedAccount, onSelect, filter }: SelectTokenDialogProps) {
@@ -73,9 +108,7 @@ export function SendSelectToken({ isOpen, onOpenChange, selected, selectedAccoun
                           }}
                           className="hover:bg-contrast-2/50 flex cursor-pointer items-center gap-3 border-b px-4 py-3 last:border-b-0"
                         >
-                          <div className="relative flex h-8 w-8 items-center justify-center">
-                            {token.logoURI && <img src={token.logoURI} alt={asset.ticker} width={32} height={32} className="rounded-full" />}
-                          </div>
+                          <TokenLogo token={token} ticker={asset.ticker} />
                           <div className="min-w-0 flex-1">
                             <div className="text-txt-high-contrast text-sm font-medium">{asset.ticker}</div>
                           </div>
